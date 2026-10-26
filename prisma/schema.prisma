@@ -1,0 +1,784 @@
+// Dhaka Kabab — restaurant management system schema.
+// Money is stored as integer "poisa" (BDT x 100). Never floats.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  MANAGER
+  CASHIER
+  KITCHEN
+  CUSTOMER
+}
+
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+  DELIVERY
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  SERVED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  REFUNDED
+}
+
+enum TableStatus {
+  AVAILABLE
+  RESERVED
+  OCCUPIED
+  CLEANING
+  DISABLED
+}
+
+enum TableSessionStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum BillStatus {
+  OPEN
+  FINALIZED
+  SETTLED
+  VOIDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  MOBILE_BANKING
+  ONLINE_GATEWAY
+  OTHER
+}
+
+enum PaymentRecordStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum RefundStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  IN_APP
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum NotificationType {
+  ORDER_CREATED
+  ORDER_STATUS_CHANGED
+  ORDER_READY
+  RESERVATION_CREATED
+  RESERVATION_CONFIRMED
+  RESERVATION_CANCELLED
+  RESERVATION_REMINDER
+  RESERVATION_NO_SHOW
+  PAYMENT_SUCCEEDED
+  PAYMENT_FAILED
+  BILL_SETTLED
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum AuditActorType {
+  USER
+  GUEST
+  SYSTEM
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  /// bcrypt/argon hash. Never selected into API responses.
+  passwordHash  String
+  name          String
+  phone         String?
+  role          UserRole       @default(CUSTOMER)
+  isActive      Boolean        @default(true)
+  address       String?
+  lastLoginAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  sessions        Session[]
+  openedSessions  TableSession[]  @relation("SessionOpenedBy")
+  closedSessions  TableSession[]  @relation("SessionClosedBy")
+  ordersCreated   Order[]         @relation("OrderCustomer")
+  ordersHandled   Order[]         @relation("OrderStaff")
+  statusEvents    OrderStatusEvent[]
+  reservationsMade Reservation[]   @relation("ReservationCustomer")
+  billsCreated    Bill[]          @relation("BillCreatedBy")
+  paymentsTaken   Payment[]       @relation("PaymentTakenBy")
+  refundsIssued   Refund[]        @relation("RefundProcessedBy")
+  auditLogs       AuditLog[]
+  updatedSettings RestaurantSettings[] @relation("SettingsUpdatedBy")
+  assignedTables  RestaurantTable[] @relation("TableWaiter")
+
+  @@index([role, isActive])
+  @@map("users")
+}
+
+/// Server-side session records backing the httpOnly cookie. Allows revocation.
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  ipHash    String?
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("auth_sessions")
+}
+
+/// Singleton row (id = "default"). Non-secret configuration only.
+model RestaurantSettings {
+  id   String @id @default("default")
+  name String @default("Dhaka Kabab")
+
+  // Contact identity. Sample values are seeded for development only.
+  logoUrl           String?
+  addressLine1      String  @default("")
+  addressLine2      String?
+  city              String  @default("")
+  country           String  @default("Bangladesh")
+  phonePrimary      String  @default("")
+  phoneSecondary    String?
+  emailPublic       String  @default("")
+  mapsUrl           String?
+  facebookUrl       String?
+  instagramUrl      String?
+
+  timezone          String  @default("Asia/Dhaka")
+  currencyCode      String  @default("BDT")
+  currencySymbol    String  @default("৳")
+
+  // Opening hours: [{ days: [0..6], opens: "HH:MM", closes: "HH:MM" }]
+  openingHours      Json    @default("[]")
+  contactNote       String?
+
+  // Charges. Basis points (1500 = 15.00%), applied to the discounted subtotal.
+  serviceChargeBps  Int     @default(0)
+  vatBps            Int     @default(0)
+  vatOnServiceCharge Boolean @default(false)
+  roundingStepPoisa Int     @default(1)
+
+  // Reservations
+  reservationSlotMinutes     Int     @default(30)
+  reservationDurationMinutes Int     @default(90)
+  reservationBufferMinutes   Int     @default(15)
+  reservationMaxDaysAhead    Int     @default(60)
+  reservationCutoffMinutes   Int     @default(60)
+  reservationDepositPoisa    Int     @default(0)
+  requirePolicyAcceptance    Boolean @default(true)
+
+  // Order channels
+  allowDineIn    Boolean @default(true)
+  allowTakeaway  Boolean @default(true)
+  allowDelivery  Boolean @default(false)
+  deliveryFeePoisa Int  @default(0)
+  autoConfirmOrders Boolean @default(true)
+
+  // Billing / payments
+  enablePartialPayments Boolean @default(true)
+  paymentProvider       String  @default("simulated")
+  paymentStoreId        String?
+  chatbotEnabled        Boolean @default(true)
+  chatbotFallbackOnly   Boolean @default(false)
+  emailNotificationsEnabled Boolean @default(false)
+  receiptFooter         String  @default("Thank you for dining with us.")
+  receiptHeader         String  @default("Dhaka Kabab")
+
+  updatedByUserId String?
+  updatedBy       User?     @relation("SettingsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("restaurant_settings")
+}
+
+model MenuCategory {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String?
+  imageUrl    String?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  items MenuItem[]
+
+  @@index([isActive, sortOrder])
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String?
+  categoryId  String
+  category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  imageUrl    String?
+  /// Sale price in poisa. Historical orders keep their own snapshot.
+  pricePoisa  Int
+  available   Boolean   @default(true)
+  featured    Boolean   @default(false)
+  prepMinutes Int?
+  ingredients String?
+  allergens   String?
+  spicyLevel  Int       @default(0)
+  servesInfo  String?
+  sortOrder   Int       @default(0)
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  customizationGroups MenuItemCustomizationGroup[]
+  orderItems          OrderItem[]
+
+  @@index([categoryId, available, sortOrder])
+  @@index([featured, available])
+  @@index([archivedAt])
+  @@map("menu_items")
+}
+
+model MenuItemCustomizationGroup {
+  id         String  @id @default(cuid())
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  name       String
+  required   Boolean @default(false)
+  minSelect  Int     @default(0)
+  maxSelect  Int     @default(1)
+  sortOrder  Int     @default(0)
+
+  options MenuItemCustomizationOption[]
+
+  @@index([menuItemId, sortOrder])
+  @@map("menu_item_customization_groups")
+}
+
+model MenuItemCustomizationOption {
+  id               String  @id @default(cuid())
+  groupId          String
+  group            MenuItemCustomizationGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name             String
+  priceDeltaPoisa  Int     @default(0)
+  available        Boolean @default(true)
+  sortOrder        Int     @default(0)
+
+  @@index([groupId, sortOrder])
+  @@map("menu_item_customization_options")
+}
+
+model RestaurantTable {
+  id             String      @id @default(cuid())
+  /// Human label printed on the QR placard, e.g. "T12".
+  label          String      @unique
+  number         Int         @unique
+  publicToken    String      @unique
+  capacity       Int
+  section        String?
+  status         TableStatus @default(AVAILABLE)
+  isEnabled      Boolean     @default(true)
+  disabledReason String?
+  /// Staff member currently responsible for the table (optional).
+  waiterUserId   String?
+  waiter         User?       @relation("TableWaiter", fields: [waiterUserId], references: [id], onDelete: SetNull)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  tokenRotatedAt DateTime?
+
+  sessions        TableSession[]
+  reservations    ReservationTableAssignment[]
+  orders          Order[]
+
+  @@index([status, isEnabled])
+  @@index([section])
+  @@map("restaurant_tables")
+}
+
+/// One dining visit at one table. All orders of the visit belong to it and roll up into one bill.
+model TableSession {
+  id           String             @id @default(cuid())
+  /// Short code a guest can quote when calling the restaurant.
+  code         String             @unique
+  tableId      String
+  table        RestaurantTable    @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  status       TableSessionStatus @default(ACTIVE)
+  guestCount   Int                @default(2)
+  reservationId String?
+  reservation  Reservation?       @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+  openedByUserId String?
+  openedBy     User?              @relation("SessionOpenedBy", fields: [openedByUserId], references: [id], onDelete: SetNull)
+  closedByUserId String?
+  closedBy     User?              @relation("SessionClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
+  openedAt     DateTime           @default(now())
+  closedAt     DateTime?
+  closeReason  String?
+  notes        String?
+
+  guests   TableSessionGuest[]
+  orders   Order[]
+  bills    Bill[]
+
+  @@index([tableId, status])
+  @@index([status, openedAt])
+  @@map("table_sessions")
+}
+
+/// A guest device that joined one session through the QR link. Orders are attributed to it.
+model TableSessionGuest {
+  id             String       @id @default(cuid())
+  sessionId      String
+  session        TableSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  participantToken String     @unique
+  label          String?
+  joinedAt       DateTime     @default(now())
+  lastSeenAt     DateTime     @default(now())
+
+  orders Order[]
+
+  @@index([sessionId])
+  @@map("table_session_guests")
+}
+
+model Order {
+  id            String       @id @default(cuid())
+  /// Human-readable, e.g. "DK-20261027-0007".
+  orderNumber   String       @unique
+  type          OrderType    @default(DINE_IN)
+  status        OrderStatus  @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID)
+
+  tableId       String?
+  table         RestaurantTable? @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  sessionId     String?
+  session       TableSession?  @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  participantId String?
+  participant   TableSessionGuest? @relation(fields: [participantId], references: [id], onDelete: Restrict)
+
+  customerId    String?
+  customer      User?        @relation("OrderCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  staffUserId   String?
+  staff         User?        @relation("OrderStaff", fields: [staffUserId], references: [id], onDelete: SetNull)
+
+  /// Snapshot for guest orders so history survives account changes.
+  contactName   String?
+  contactPhone  String?
+  deliveryAddress String?
+
+  subtotalPoisa       Int
+  discountPoisa       Int  @default(0)
+  serviceChargePoisa  Int  @default(0)
+  vatPoisa            Int  @default(0)
+  deliveryFeePoisa    Int  @default(0)
+  totalPoisa          Int
+  /// Verified payments attributed to this order (takeaway/delivery flows).
+  paidPoisa           Int  @default(0)
+
+  specialInstructions String?
+  internalNote        String?
+  cancelledReason     String?
+  confirmedAt         DateTime?
+  preparingAt         DateTime?
+  readyAt             DateTime?
+  servedAt            DateTime?
+  completedAt         DateTime?
+  cancelledAt         DateTime?
+
+  /// Client-supplied key; retries reuse the same order instead of creating a second one.
+  idempotencyKey      String?  @unique
+  /// Short code shown to the guest for status lookups without an account.
+  publicToken         String   @unique
+  isDemo              Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  items       OrderItem[]
+  statusEvents OrderStatusEvent[]
+  bills       BillOrder[]
+  standaloneBills Bill[]
+  payments    Payment[]
+
+  @@index([status, createdAt])
+  @@index([type, createdAt])
+  @@index([sessionId, status])
+  @@index([tableId, createdAt])
+  @@index([customerId, createdAt])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+/// Immutable line snapshot: renaming or archiving a menu item cannot rewrite history.
+model OrderItem {
+  id              String   @id @default(cuid())
+  orderId         String
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId      String?
+  menuItem        MenuItem? @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+
+  nameSnapshot    String
+  unitPricePoisa  Int
+  quantity        Int
+  lineTotalPoisa  Int
+  /// Chosen options with their price deltas at purchase time.
+  optionsSnapshot Json     @default("[]")
+  instructions    String?
+  createdAt       DateTime @default(now())
+
+  billLines BillItem[]
+
+  @@index([orderId])
+  @@index([menuItemId])
+  @@map("order_items")
+}
+
+model OrderStatusEvent {
+  id        String      @id @default(cuid())
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromStatus OrderStatus?
+  toStatus  OrderStatus
+  actorUserId String?
+  actor     User?       @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  note      String?
+  createdAt DateTime    @default(now())
+
+  @@index([orderId, createdAt])
+  @@map("order_status_events")
+}
+
+model Reservation {
+  id              String             @id @default(cuid())
+  /// Human-readable booking reference, e.g. "BK-2610-0004".
+  code            String             @unique
+  /// Token in the confirmation link; the record itself is not enumerable.
+  publicToken     String             @unique
+  customerName    String
+  phone           String
+  email           String?
+  partySize       Int
+  /// Instant in UTC; rendered in the restaurant timezone.
+  startsAt        DateTime
+  durationMinutes Int
+  status          ReservationStatus  @default(PENDING)
+  specialRequests String?
+  policyAccepted  Boolean            @default(false)
+  customerId      String?
+  customer        User?              @relation("ReservationCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  createdVia      String             @default("WEB")
+  sessions        TableSession[]
+  confirmedAt     DateTime?
+  checkedInAt     DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  cancelReason    String?
+  noShowAt        DateTime?
+  isDemo          Boolean            @default(false)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  tables ReservationTableAssignment[]
+
+  @@index([startsAt, status])
+  @@index([phone])
+  @@index([status, createdAt])
+  @@map("reservations")
+}
+
+model ReservationTableAssignment {
+  id            String      @id @default(cuid())
+  reservationId String
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  tableId       String
+  table         RestaurantTable @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  seatsUsed     Int
+  createdAt     DateTime    @default(now())
+
+  @@unique([reservationId, tableId])
+  @@index([tableId])
+  @@map("reservation_table_assignments")
+}
+
+/// A bill for one table session (or one standalone order). Totals are snapshotted on finalize.
+model Bill {
+  id            String     @id @default(cuid())
+  number        String     @unique
+  status        BillStatus @default(OPEN)
+  sessionId     String?
+  session       TableSession? @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  /// Standalone bills (takeaway/delivery paid at counter) point at one order.
+  orderId       String?
+  order         Order?     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  subtotalPoisa      Int @default(0)
+  discountPoisa      Int @default(0)
+  serviceChargePoisa Int @default(0)
+  vatPoisa           Int @default(0)
+  totalPoisa         Int @default(0)
+  paidPoisa          Int @default(0)
+  /// Verified refund total, kept for reconciliation.
+  refundedPoisa      Int @default(0)
+
+  /// Serialized totals + configuration at finalize time; audit evidence.
+  snapshot Json?
+  finalizedAt DateTime?
+  settledAt   DateTime?
+  voidedAt    DateTime?
+  voidReason  String?
+  createdByUserId String?
+  createdBy   User?   @relation("BillCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  isDemo      Boolean @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items    BillItem[]
+  orders   BillOrder[]
+  payments Payment[]
+  refunds  Refund[]
+
+  @@index([status, createdAt])
+  @@index([sessionId])
+  @@map("bills")
+}
+
+/// Immutable bill line. Copied from OrderItem at finalize/refresh so receipts never change.
+model BillItem {
+  id             String   @id @default(cuid())
+  billId         String
+  bill           Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  orderItemId    String?
+  orderItem      OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  orderNumber    String?
+  description    String
+  optionsSnapshot Json    @default("[]")
+  unitPricePoisa Int
+  quantity       Int
+  lineTotalPoisa Int
+  createdAt      DateTime @default(now())
+
+  @@index([billId])
+  @@map("bill_items")
+}
+
+/// Which orders are already covered by a bill, so consolidation never double-counts.
+model BillOrder {
+  id      String @id @default(cuid())
+  billId  String
+  bill    Bill   @relation(fields: [billId], references: [id], onDelete: Cascade)
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([billId, orderId])
+  @@index([orderId])
+  @@map("bill_orders")
+}
+
+model Payment {
+  id            String              @id @default(cuid())
+  /// Unique reference handed to the gateway; also used for idempotent callbacks.
+  reference     String              @unique
+  billId        String?
+  bill          Bill?               @relation(fields: [billId], references: [id], onDelete: Restrict)
+  orderId       String?
+  order         Order?              @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  method        PaymentMethod
+  status        PaymentRecordStatus @default(PENDING)
+  amountPoisa   Int
+  currency      String              @default("BDT")
+  provider      String              @default("counter")
+  gatewayTxnId  String?
+  gatewayPayload Json?
+  failureReason String?
+  /// Hash of the verified callback body so duplicate callbacks are recognised and ignored.
+  callbackFingerprint String? @unique
+  takenByUserId String?
+  takenBy       User?               @relation("PaymentTakenBy", fields: [takenByUserId], references: [id], onDelete: SetNull)
+  verifiedAt    DateTime?
+  isDemo        Boolean             @default(false)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  events  PaymentEvent[]
+  refunds Refund[]
+
+  @@index([status, createdAt])
+  @@index([billId])
+  @@index([orderId])
+  @@index([provider, status])
+  @@map("payments")
+}
+
+/// Append-only audit trail of everything a gateway or cashier did to a payment.
+model PaymentEvent {
+  id         String   @id @default(cuid())
+  paymentId  String
+  payment    Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  eventKey   String   @unique
+  kind       String
+  payload    Json
+  createdAt  DateTime @default(now())
+
+  @@index([paymentId, createdAt])
+  @@map("payment_events")
+}
+
+model Refund {
+  id              String       @id @default(cuid())
+  number          String       @unique
+  paymentId       String
+  payment         Payment      @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  billId          String?
+  bill            Bill?        @relation(fields: [billId], references: [id], onDelete: Restrict)
+  amountPoisa     Int
+  currency        String       @default("BDT")
+  reason          String
+  status          RefundStatus @default(PENDING)
+  processedByUserId String?
+  processedBy     User?        @relation("RefundProcessedBy", fields: [processedByUserId], references: [id], onDelete: SetNull)
+  gatewayRefundId String?
+  isDemo          Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+  processedAt     DateTime?
+
+  @@index([status, createdAt])
+  @@map("refunds")
+}
+
+/// Outbound notification with delivery state; nothing is reported as sent unless a provider confirmed it.
+model Notification {
+  id            String              @id @default(cuid())
+  type          NotificationType
+  channel       NotificationChannel @default(EMAIL)
+  toAddress     String
+  subject       String
+  bodyText      String
+  status        NotificationStatus  @default(QUEUED)
+  attempts      Int                 @default(0)
+  lastError     String?
+  relatedKind   String?
+  relatedId     String?
+  sentAt        DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@index([status, createdAt])
+  @@index([relatedKind, relatedId])
+  @@map("notifications")
+}
+
+model ChatConversation {
+  id          String   @id @default(cuid())
+  publicToken String   @unique
+  /// Table token the visitor arrived with, if any. Scopes menu/price answers.
+  tableToken  String?
+  locale      String   @default("en")
+  startedAt   DateTime @default(now())
+  lastActiveAt DateTime @default(now())
+  messageCount Int      @default(0)
+  /// True while no AI provider responded (FAQ/grounded fallback).
+  fallbackOnly Boolean  @default(false)
+
+  messages ChatMessage[]
+
+  @@index([lastActiveAt])
+  @@map("chat_conversations")
+}
+
+model ChatMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           ChatRole
+  content        String
+  /// Database records the answer was grounded in.
+  sourcesJson    Json?
+  usedFallback   Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("chat_messages")
+}
+
+model AuditLog {
+  id          String          @id @default(cuid())
+  actorUserId String?
+  actor       User?           @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorType   AuditActorType  @default(USER)
+  actorLabel  String?
+  action      String
+  entityType  String
+  entityId    String?
+  beforeJson  Json?
+  afterJson   Json?
+  metaJson    Json?
+  ipHash      String?
+  createdAt   DateTime        @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+/// Atomic counters that mint human-readable document numbers.
+model DocumentCounter {
+  scope String  @id
+  year  Int
+  value Int     @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@map("document_counters")
+}
