@@ -118,7 +118,7 @@ export type SettingsWire = {
   deliveryFeePoisa: string;
   autoConfirmOrders: boolean;
   enablePartialPayments: boolean;
-  paymentProvider: "simulated" | "sslcommerz";
+  paymentProvider: ProviderChoice;
   chatbotEnabled: boolean;
   chatbotFallbackOnly: boolean;
   emailNotificationsEnabled: boolean;
@@ -186,8 +186,19 @@ export function currentPayload(row: SettingsRow): SettingsWire {
   };
 }
 
-export function normaliseProvider(value: string): "simulated" | "sslcommerz" {
-  return value.trim().toLowerCase() === "sslcommerz" ? "sslcommerz" : "simulated";
+/**
+ * What the gateway picker may hold. `none` is a choice, not a gap: the counter takes
+ * every bill and the server contacts no gateway.
+ */
+export type ProviderChoice = "none" | "simulated" | "sslcommerz";
+
+export function normaliseProvider(value: string): ProviderChoice {
+  const lower = value.trim().toLowerCase();
+  // Anything this build does not recognise is treated as no gateway — the safe state,
+  // and the one that cannot pretend to move money.
+  if (lower === "sslcommerz") return "sslcommerz";
+  if (lower === "simulated") return "simulated";
+  return "none";
 }
 
 /** Props every section form receives: the currently saved row and its save callback. */

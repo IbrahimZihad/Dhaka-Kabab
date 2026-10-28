@@ -34,11 +34,12 @@ export const POST = route(async (request: Request) => {
 
   const readiness = await providerReadiness();
   if (!readiness.available) {
+    // No environment variable names here. Which key is missing is staff's business —
+    // a guest only needs to know the counter is the door, and `/admin/settings` says
+    // the rest.
     throw new AppError(
       "PROVIDER_NOT_CONFIGURED",
-      readiness.missing.length > 0
-        ? `Online payment is not open yet. Still needed: ${readiness.missing.join(", ")}. Please pay at the counter.`
-        : `Online payment is not open yet (${readiness.label}). Please pay at the counter.`,
+      "Online payment is not open on this site yet. Please pay at the counter — staff can record your payment there.",
     );
   }
 

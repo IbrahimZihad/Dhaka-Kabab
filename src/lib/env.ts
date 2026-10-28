@@ -58,6 +58,16 @@ export const env = {
     return optional("UPLOAD_DIR") ?? "./storage/uploads";
   },
 
+  /**
+   * How many proxies sit between a customer and this process. `0` means the Node
+   * server is exposed directly, so no `X-Forwarded-For` header can be believed —
+   * the client would have written it itself. Only when an operator names the hops
+   * does the app read the address that the nth proxy from the right appended.
+   */
+  get trustedProxyHops(): number {
+    return Math.max(0, integer("TRUSTED_PROXY_HOPS", 0));
+  },
+
   // --- Payment provider -----------------------------------------------------
   get sslcommerz(): { storeId: string; apiKey: string; mode: "sandbox" | "live"; baseUrl: string } | null {
     const storeId = optional("SSLCOMMERZ_STORE_ID");
@@ -72,6 +82,17 @@ export const env = {
         optional("SSLCOMMERZ_BASE_URL") ??
         (mode === "live" ? "https://securepay.sslcommerz.com" : "https://sandbox.sslcommerz.com"),
     };
+  },
+
+  /**
+   * The simulated gateway records money that never moved, so it stays off unless
+   * an operator turns it on by name. `NODE_ENV` is not the test: the artifact
+   * `npm run build && npm start` produces is the same one the test suite and any
+   * staging box exercise, and a stand-in that silently refuses there turns a
+   * guest's pay screen into a dead end.
+   */
+  get allowSimulatedGateway(): boolean {
+    return flag("ALLOW_SIMULATED_GATEWAY", false);
   },
 
   // --- AI provider ----------------------------------------------------------

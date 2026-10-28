@@ -128,7 +128,8 @@ async function SettingsView() {
   if (!row.addressLine1.trim()) gaps.push("No street address is recorded, so the website cannot tell guests where you are.");
   if (row.openingHours.length === 0) gaps.push("Opening hours have never been recorded: the website says so to guests instead of inventing a time, and the booking form has no slot to offer.");
   if (!row.phonePrimary.trim()) gaps.push("No phone number is recorded, so a guest with a problem has no way to call.");
-  if (!gateway.available) gaps.push(`Online payment is not reachable on this server: ${gateway.missing.join(", ") || "the gateway"} is not configured. Guests can still pay at the counter.`);
+  if (gateway.configured === "none") gaps.push("No online payment gateway is chosen, so every bill is settled at the counter. Choose one under Payments when you are ready to take payments online.");
+  else if (!gateway.available) gaps.push(`Online payment is not reachable on this server: ${gateway.missing.join(", ") || "the gateway"} is not configured. Guests can still pay at the counter.`);
   if (!email.configured) gaps.push(`${email.reason ?? "SMTP is not configured"}, so emailed receipts and booking confirmations do not exist today.`);
   else if (!email.enabled) gaps.push("A mail host is configured but email sending is switched off in settings, so guests receive nothing.");
   if (chat.enabled && !chat.fallbackOnly && !chat.aiConfigured) gaps.push(`${chat.aiReason ?? "No AI model is configured"}, so the assistant only answers from the menu and these settings.`);

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { AppError } from "@/lib/errors";
 import { getReservationByToken } from "@/server/services/reservation.service";
+import { getSettings } from "@/server/services/settings.service";
 import { ReservationPanel } from "@/components/site/reservation-panel";
 
 /**
@@ -18,6 +19,8 @@ export async function ReservationSection({ token }: { token: string }) {
     throw error;
   }
 
+  const settings = await getSettings();
+
   return (
     <ReservationPanel
       token={token}
@@ -31,6 +34,7 @@ export async function ReservationSection({ token }: { token: string }) {
         tables: reservation.tables.map((assignment) => assignment.table.label),
         specialRequests: reservation.specialRequests,
         canChange: ["PENDING", "CONFIRMED"].includes(reservation.status),
+        timeZone: settings.timezone,
       }}
     />
   );

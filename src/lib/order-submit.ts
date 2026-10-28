@@ -27,6 +27,8 @@ export type PlacedOrder = {
     poisa: { subtotalPoisa: number; discountPoisa: number; totalPoisa: number };
   };
   timeline: { status: string; at: string }[];
+  /** The restaurant's IANA zone; every timestamp above is shown in it. */
+  timeZone: string;
 };
 
 export type OrderResponse = { order: PlacedOrder; replayed: boolean; message: string };

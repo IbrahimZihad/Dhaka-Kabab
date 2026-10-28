@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { closeDb, readItemWithPaidAddon, readOrderByNumber, readSettings, readTableForOrdering } from "./support/db";
 import { REFRESH_TIMEOUT, ownerCredential } from "./support/env";
 import { runTag } from "./support/money";
-import { expectSignedInAs, signIn, staffContext } from "./support/staff";
+import { expectSignedInAs, guestContext, signIn } from "./support/staff";
 
 /**
  * The staff side of the counter: the door, the boards behind it, and what is left
@@ -87,9 +87,16 @@ test("a guest's order reaches the kitchen board, and the step a cook takes shows
   const orderNumber: string = ((await placed.json()) as { data: { order: { orderNumber: string } } }).data.order.orderNumber;
   expect(orderNumber, "the order is named").toBeTruthy();
 
-  const context = await staffContext(browser, "owner");
+  // This test ends by signing out, and signing out deletes the session it is holding.
+  // The owner state written by the setup project is shared by every later spec, so
+  // borrowing it here would revoke the owner for the rest of the run and the next
+  // staff screen would report a bounced session instead of the flow it came to test.
+  // The cook therefore opens its own door, through the same login form.
+  const context = await guestContext(browser);
   const page = await context.newPage();
   try {
+    await signIn(page, ownerCredential());
+
     await page.goto("/kitchen");
     await expect(page.getByRole("heading", { level: 1, name: "Kitchen", exact: true })).toBeVisible({ timeout: 90_000 });
 

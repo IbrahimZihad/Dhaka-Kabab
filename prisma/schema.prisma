@@ -249,7 +249,9 @@ model RestaurantSettings {
 
   // Billing / payments
   enablePartialPayments Boolean @default(true)
-  paymentProvider       String  @default("simulated")
+  /// "none" takes no online payment at all: the counter keeps every bill. A fresh
+  /// installation must have to choose a gateway, never discover one by accident.
+  paymentProvider       String  @default("none")
   paymentStoreId        String?
   chatbotEnabled        Boolean @default(true)
   chatbotFallbackOnly   Boolean @default(false)

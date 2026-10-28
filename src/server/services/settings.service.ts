@@ -49,7 +49,9 @@ export const DEFAULT_SETTINGS: Omit<RestaurantSettings, "id" | "createdAt" | "up
   deliveryFeePoisa: 0,
   autoConfirmOrders: true,
   enablePartialPayments: true,
-  paymentProvider: "simulated",
+  // No gateway, so an installation that has not chosen one takes no money online —
+  // and never pretends to. `simulated` is a developer's choice, made on purpose.
+  paymentProvider: "none",
   paymentStoreId: null,
   chatbotEnabled: true,
   chatbotFallbackOnly: false,

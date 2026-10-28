@@ -1,4 +1,5 @@
 import { orderStatusLabel, type PlacedOrder } from "@/lib/order-submit";
+import { formatInZone, formatTimeInZone } from "@/lib/time";
 
 const STATUS_TONE: Record<string, string> = {
   PENDING: "badge",
@@ -25,7 +26,7 @@ export function OrderCard({ order, showTimeline = true }: { order: PlacedOrder; 
                 : order.type === "DELIVERY"
                   ? "Delivery"
                   : "Order"}{" "}
-            · placed {new Date(order.createdAt).toLocaleString()}
+            · placed {formatInZone(new Date(order.createdAt), order.timeZone)}
           </p>
         </div>
         <span className={STATUS_TONE[order.status] ?? "badge"}>{orderStatusLabel(order.status)}</span>
@@ -67,7 +68,7 @@ export function OrderCard({ order, showTimeline = true }: { order: PlacedOrder; 
         <ol className="mt-4 space-y-1 text-xs soft">
           {order.timeline.map((event, index) => (
             <li key={`${event.status}-${index}`}>
-              {orderStatusLabel(event.status)} — {new Date(event.at).toLocaleTimeString()}
+              {orderStatusLabel(event.status)} — {formatTimeInZone(new Date(event.at), order.timeZone)}
             </li>
           ))}
         </ol>
@@ -75,7 +76,7 @@ export function OrderCard({ order, showTimeline = true }: { order: PlacedOrder; 
 
       {order.readyAt ? (
         <p className="notice notice-ok mt-3">
-          Ready at {new Date(order.readyAt).toLocaleTimeString()} — please collect it from the counter.
+          Ready at {formatTimeInZone(new Date(order.readyAt), order.timeZone)} — please collect it from the counter.
         </p>
       ) : null}
     </article>

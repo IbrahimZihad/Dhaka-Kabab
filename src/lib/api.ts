@@ -155,10 +155,35 @@ export function assertSameOrigin(request: Request): void {
   throw new AppError("FORBIDDEN", "Cross-origin request rejected.");
 }
 
+/**
+ * The address the app is willing to act on.
+ *
+ * `X-Forwarded-For` is a list the *client* starts: whoever sends the request writes
+ * the leftmost entry, so reading it first hands every IP-keyed limit and every audit
+ * row to the caller — a spammer needs only a different fake address per request. The
+ * entries a deployment's own proxies append are the trustworthy ones, and there are
+ * exactly `TRUSTED_PROXY_HOPS` of them, counted from the right.
+ *
+ * With no hops declared the process is exposed directly, and Node gives a route
+ * handler no access to the socket address, so the honest answer is "unknown": a
+ * coarse shared ceiling is better than a per-client limit that is really per-request.
+ */
 export function clientIp(request: Request): string {
+  const hops = env.trustedProxyHops;
+  if (hops <= 0) return "unknown";
+
   const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0]!.trim();
-  return request.headers.get("x-real-ip") ?? "unknown";
+  if (forwarded) {
+    const chain = forwarded.split(",").map((entry) => entry.trim()).filter(Boolean);
+    // Shorter than the declared hops means somebody trimmed the list before it
+    // reached us, so nothing in it can be attributed to a proxy.
+    const index = chain.length - hops;
+    if (index >= 0) return chain[index]!;
+    return "unknown";
+  }
+
+  // A single proxy that rewrites the address itself, rather than appending to a list.
+  return hops === 1 ? (request.headers.get("x-real-ip") ?? "unknown") : "unknown";
 }
 
 /** Coarse pagination so a bad client cannot ask for the whole table. */

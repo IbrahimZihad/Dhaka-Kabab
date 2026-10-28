@@ -330,15 +330,18 @@ export async function initiateGuestGatewayPayment(input: {
  * the same verification, idempotency and audit path as a real gateway callback —
  * nothing about the money logic is special-cased for the demo.
  *
- * Refused outright in production: a button that pretends money moved has no
- * place on a live till, however the provider is configured.
+ * Refused unless an operator names the switch: a button that pretends money moved
+ * has no place on a live till, however the provider is configured.
  */
 export async function completeSimulatedPayment(input: {
   reference: string;
   outcome: "APPROVED" | "DECLINED" | "ABANDONED";
 }) {
-  if (env.isProduction) {
-    throw new AppError("PROVIDER_NOT_CONFIGURED", "The simulated payment page is switched off in production.");
+  if (!env.allowSimulatedGateway) {
+    throw new AppError(
+      "PROVIDER_NOT_CONFIGURED",
+      "The simulated payment page is switched off. Set ALLOW_SIMULATED_GATEWAY to run it.",
+    );
   }
 
   const payment = await prisma.payment.findUnique({
@@ -369,7 +372,7 @@ export async function completeSimulatedPayment(input: {
  * the bill it is paying, and nothing that lets the page decide the outcome.
  */
 export async function simulatedPaymentView(reference: string) {
-  if (env.isProduction) return null;
+  if (!env.allowSimulatedGateway) return null;
   const payment = await prisma.payment.findUnique({
     where: { reference },
     select: {

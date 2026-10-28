@@ -46,11 +46,19 @@ export function createSimulatedProvider(): PaymentProvider {
     isDemo: true,
 
     async init(input: InitPaymentInput): Promise<InitPaymentResult> {
-      const actionUrl = new URL("/pay/simulated", env.appUrl);
-      actionUrl.searchParams.set("ref", input.reference);
-      actionUrl.searchParams.set("amount", (input.amountPoisa / 100).toFixed(2));
-      actionUrl.searchParams.set("desc", input.description.slice(0, 120));
-      actionUrl.searchParams.set("next", input.returnUrl);
+      // Relative on purpose. The gateway page is this same application, and a guest
+      // who arrived at the restaurant on one host name (`localhost` in development,
+      // or whichever alias the QR sticker resolved to) is kept on it. Pinning this to
+      // `NEXT_PUBLIC_APP_URL` instead walks them onto a second origin, where the
+      // table seat they are paying for — held in that browser's local storage, which
+      // is partitioned per host — no longer exists, and they land on a join screen.
+      const params = new URLSearchParams({
+        ref: input.reference,
+        amount: (input.amountPoisa / 100).toFixed(2),
+        desc: input.description.slice(0, 120),
+        next: input.returnUrl,
+      });
+      const actionUrl = `/pay/simulated?${params.toString()}`;
       return {
         kind: "simulated",
         actionUrl: actionUrl.toString(),

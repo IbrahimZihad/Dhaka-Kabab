@@ -161,7 +161,10 @@ export async function closeSession(
   target: SeatingTarget,
   reason: "Closed manually" | "Bill settled" | "Left without paying",
 ): Promise<void> {
-  await owner.reload();
+  // Opened rather than reloaded, because the spec that finishes a visit is not
+  // necessarily standing on the floor board when it gets here — the payment journey
+  // goes off to read the day's takings first.
+  await owner.goto("/admin/floor");
   const tile = floorTile(owner, target.label);
   await tile.getByRole("button", { name: "Close session" }).click();
   await tile.getByLabel("Why is this visit ending?").selectOption({ label: reason });

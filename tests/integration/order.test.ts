@@ -240,15 +240,40 @@ describe("order pricing", () => {
 
   it("returns the first order when the same submission is replayed", async () => {
     const idempotencyKey = uniqueKey("replay");
+    // One input object, sent twice: a retry is the *same* request, so it carries the
+    // same contact details. The service honours a replay only for that same requester.
+    const submission = orderInput({ idempotencyKey });
 
-    const first = await createOrder(orderInput({ idempotencyKey }), { customerId: null });
+    const first = await createOrder(submission, { customerId: null });
     expect(first.replayed).toBe(false);
     track("orders", first.order.id);
 
-    const second = await createOrder(orderInput({ idempotencyKey }), { customerId: null });
+    const second = await createOrder(submission, { customerId: null });
     expect(second.replayed).toBe(true);
     expect(second.order.id).toBe(first.order.id);
     expect(await prisma.order.count({ where: { idempotencyKey } })).toBe(1);
+  });
+
+  it("refuses to hand another guest's order to whoever presents its key", async () => {
+    const idempotencyKey = uniqueKey("stolen-key");
+
+    const ours = await createOrder(orderInput({ idempotencyKey }), { customerId: null });
+    track("orders", ours.order.id);
+
+    // Same key, different requester: nothing about this order may come back — not the
+    // totals, and above all not the `publicToken` that opens the tracking screens.
+    const thiefInput = orderInput({ idempotencyKey });
+    const error = await expectRefusal(
+      () => createOrder(thiefInput, { customerId: null }),
+      "CONFLICT",
+      "another guest's idempotency key",
+    );
+    expect(error.status).toBe(409);
+    expect(error.message).not.toMatch(ours.order.publicToken);
+
+    // The refusal must not leave a second order behind either.
+    expect(await prisma.order.count({ where: { idempotencyKey } })).toBe(1);
+    expect(await prisma.order.count({ where: { contactPhone: thiefInput.contact?.phone } })).toBe(0);
   });
 
   it("refuses a channel the restaurant has not enabled", async () => {
@@ -289,6 +314,40 @@ describe("dine-in orders and the table session", () => {
     const guestView = await getSessionOrdersForGuest(joined.participantToken);
     expect(guestView.session.orders.map((row) => row.id)).toEqual([order.id]);
     expect((await getOrderByPublicToken(order.publicToken)).id).toBe(order.id);
+  });
+
+  it("replays a seat's own retry, but refuses the same key from another seat", async () => {
+    const table = await createFixtureTable(4);
+    const firstSeat = await joinFixtureTable(table.publicToken, "First seat");
+    const secondSeat = await joinFixtureTable(table.publicToken, "Second seat");
+
+    const submission = orderInput({
+      type: "DINE_IN",
+      tableToken: table.publicToken,
+      participantToken: firstSeat.participantToken,
+      contact: undefined,
+    });
+    const placed = await createOrder(submission, { customerId: null });
+    track("orders", placed.order.id);
+
+    // The same phone at the same table retrying a dropped request must get its order
+    // back, or the double tap would bill the table twice.
+    const replay = await createOrder(submission, { customerId: null });
+    expect(replay.replayed).toBe(true);
+    expect(replay.order.id).toBe(placed.order.id);
+
+    // A different seat at that table holds a different participant token, so it is a
+    // different requester even though the table is shared.
+    await expectRefusal(
+      () =>
+        createOrder(
+          { ...submission, participantToken: secondSeat.participantToken },
+          { customerId: null },
+        ),
+      "CONFLICT",
+      "another seat's idempotency key",
+    );
+    expect(await prisma.order.count({ where: { idempotencyKey: submission.idempotencyKey } })).toBe(1);
   });
 
   it("refuses to order into a visit that has been closed", async () => {

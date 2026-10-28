@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { closeDb, readSettings } from "./support/db";
 import { REFRESH_TIMEOUT } from "./support/env";
 import { moneyText, runTag, testMobile } from "./support/money";
 import { guestContext, staffContext } from "./support/staff";
@@ -9,10 +10,11 @@ import { closeSession, floorTile, pickFreeTable, seatAtTable, sendCartToKitchen 
 /**
  * Scenario 1's payment half, driven through the door the product really has.
  *
- * This installation has no bank configured, so online payment runs on the bundled
- * simulated gateway — and every screen that touches it says so out loud. The path a
- * guest can actually walk is a table's bill: order at the table, staff draw the bill
- * up, staff finalize it, only then may the guest pay online, and the gateway's own
+ * This installation selects the bundled simulated gateway — and every screen that
+ * touches it says so out loud, because a store with no bank configured must never
+ * look like a store taking real money. The path a guest can actually walk is a
+ * table's bill: order at the table, staff draw the bill up, staff finalize it, only
+ * then may the guest pay online, and the gateway's own
  * verified notification (not the redirect) is what settles the money.
  *
  * FINDING, reported rather than papered over: a TAKEAWAY order has no way to reach a
@@ -26,7 +28,20 @@ import { closeSession, floorTile, pickFreeTable, seatAtTable, sendCartToKitchen 
 test.describe.serial("simulated gateway, from a table bill to a settled payment", () => {
   const tag = runTag();
 
+  test.afterAll(async () => {
+    await closeDb();
+  });
+
   test("the gateway is only entered through a finalized bill, and pays in simulation", async ({ browser }) => {
+    // Naming a gateway is now an operator's decision — an installation that has not
+    // made one takes no online payment at all — so this journey states the choice it
+    // depends on instead of assuming the database was seeded a particular way.
+    const stored = await readSettings();
+    expect(
+      stored.paymentProvider,
+      "this journey walks the simulated gateway. Select it under Payments on /admin/settings, and set ALLOW_SIMULATED_GATEWAY where the site runs.",
+    ).toBe("simulated");
+
     const owner = await staffContext(browser, "owner");
     const ownerPage = await owner.newPage();
     const target = await pickFreeTable(ownerPage);
@@ -46,12 +61,14 @@ test.describe.serial("simulated gateway, from a table bill to a settled payment"
     await tile.getByRole("button", { name: "Draw up / refresh the bill" }).click();
     await expect(tile).toContainText("was drawn up from its orders", { timeout: 60_000 });
 
-    const billNumber = await ownerPage
-      .locator("a[href^='/admin/bills/']")
-      .filter({ hasText: /Open the bill/ })
+    // Read the link out of *this* table's tile. The floor board carries a link for
+    // every bill in the room, and a run that died part-way leaves its table's bill
+    // open behind this one, so a page-wide "Open the bill" is two elements deep.
+    const billHref = await tile
+      .getByRole("link", { name: "Open the bill" })
       .getAttribute("href");
-    expect(billNumber, "the floor tile should link to the bill it just raised").toBeTruthy();
-    await ownerPage.goto(billNumber as string);
+    expect(billHref, "the floor tile should link to the bill it just raised").toBeTruthy();
+    await ownerPage.goto(billHref as string);
     await expect(ownerPage.getByText("Open", { exact: true }).first())
       .toBeVisible({ timeout: 60_000 });
 
@@ -75,10 +92,18 @@ test.describe.serial("simulated gateway, from a table bill to a settled payment"
     await expect(ownerPage.getByText("This bill is finalized", { exact: false })).toBeVisible({ timeout: 60_000 });
 
     // ------------------------------------------------------------ the hand-off
+    // The guest is left sitting in the open panel with the refusal still on screen.
+    // The card polls, so finalising the bill must retract that sentence — it now
+    // contradicts the status line above it — and the same door must open again.
+    await expect(table.getByText("not finalized yet", { exact: false })).toHaveCount(0, { timeout: REFRESH_TIMEOUT });
+    await table.getByRole("button", { name: "Not now" }).click();
     await expect(payButton, "a finalized bill may be paid online from the table").toBeVisible({
       timeout: REFRESH_TIMEOUT,
     });
-    const outstanding = (await payButton.innerText()).trim();
+    // The figure, not the button's sentence: the gateway states the amount it is
+    // about to take as "Paying ৳ 370", and the two screens must agree on that number.
+    const outstanding = (await payButton.innerText()).trim().replace(/^Pay\s+/, "").replace(/\s+online$/, "");
+    expect(outstanding, "the pay door names an amount").toMatch(/৳/);
     await payButton.click();
     await table.getByPlaceholder("Your name").fill(`E2e Payer ${tag}`);
     await table.getByPlaceholder("Mobile number").fill(testMobile(tag));

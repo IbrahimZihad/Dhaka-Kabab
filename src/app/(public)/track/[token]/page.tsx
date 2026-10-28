@@ -14,7 +14,7 @@ async function TrackBody({ params }: { params: Promise<{ token: string }> }) {
   let order;
   try {
     const [found, settings] = await Promise.all([getOrderByPublicToken(token), getSettings()]);
-    order = guestOrder(found, settings.currencySymbol);
+    order = guestOrder(found, settings.currencySymbol, settings.timezone);
   } catch (error) {
     if (error instanceof AppError && error.code === "NOT_FOUND") notFound();
     throw error;

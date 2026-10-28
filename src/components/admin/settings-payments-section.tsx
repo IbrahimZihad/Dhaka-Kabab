@@ -9,6 +9,7 @@ import {
   normaliseProvider,
   parseRow,
   useTrackedDraft,
+  type ProviderChoice,
   type SaveResponse,
   type SectionProps,
   type SettingsRow,
@@ -39,7 +40,7 @@ export type GatewayReadinessView = {
 };
 
 type PaymentsDraft = {
-  paymentProvider: "simulated" | "sslcommerz";
+  paymentProvider: ProviderChoice;
   enablePartialPayments: boolean;
 };
 
@@ -85,10 +86,13 @@ export function SettingsPaymentsForm({
     const next = parseRow(response.settings);
     markSaved();
     onSaved(next);
+    const saved = normaliseProvider(next.paymentProvider);
     action.setNotice(
-      normaliseProvider(next.paymentProvider) === "simulated"
+      saved === "simulated"
         ? "Saved. Online payment runs on the simulated gateway: it records development payments, not real money, and none of it belongs in the takings."
-        : "Saved. SSLCommerz is now the selected gateway. Whether a payment is received is decided by the bank's responses, not by this screen.",
+        : saved === "sslcommerz"
+          ? "Saved. SSLCommerz is now the selected gateway. Whether a payment is received is decided by the bank's responses, not by this screen."
+          : "Saved. No gateway is selected, so the server contacts none: every bill is settled at the counter, where staff record cash, card and mobile banking.",
     );
   }
 
@@ -106,13 +110,15 @@ export function SettingsPaymentsForm({
               value={draft.paymentProvider}
               onChange={(event) => update({ paymentProvider: normaliseProvider(event.target.value) })}
             >
+              <option value="none">No online payment (counter only)</option>
               <option value="simulated">Simulated gateway (development)</option>
               <option value="sslcommerz">SSLCommerz (real bank)</option>
             </select>
             <p className="hint mt-1">
               Changing this does not move a payment already handed to the other gateway: those stay pending until that
               gateway reports back, so settle or void them first. The counter takes cash, card and mobile banking
-              either way.
+              either way. The simulated gateway is a development stand-in and takes nothing unless the server also has
+              ALLOW_SIMULATED_GATEWAY set, so a store that leaves no gateway chosen is a store paid at the counter.
             </p>
           </div>
           <div className="space-y-2">

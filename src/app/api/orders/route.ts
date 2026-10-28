@@ -38,7 +38,7 @@ export const POST = route(async (request: Request) => {
   const settings = await getSettings();
   return created(
     {
-      order: guestOrder(order, settings.currencySymbol),
+      order: guestOrder(order, settings.currencySymbol, settings.timezone),
       replayed: result.replayed,
       message: result.replayed
         ? "This order was already placed. Nothing new was created."

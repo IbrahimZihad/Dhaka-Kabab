@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { allowedOrigins, assertSameOrigin, ok, route } from "@/lib/api";
 import { isAppError } from "@/lib/errors";
 
@@ -9,6 +9,18 @@ import { isAppError } from "@/lib/errors";
  * IP, by an alias host, or through a reverse proxy whose internal origin differs
  * from the public one. Both directions are asserted.
  */
+
+/**
+ * `route()` calls Next's `connection()` before anything else, to declare every
+ * endpoint request-time under Cache Components. Called straight from a unit test
+ * there is no work-unit store for it to read, and it throws — an artefact of the
+ * test reaching past the runtime, not a defect in the gate. The stub keeps the
+ * rest of `next/server` real, because these assertions run on `NextResponse.json`.
+ */
+vi.mock("next/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/server")>();
+  return { ...actual, connection: () => Promise.resolve() };
+});
 
 const PATH = "/api/payments";
 

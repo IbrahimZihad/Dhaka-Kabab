@@ -25,8 +25,9 @@ export const GET = route(async (request: Request) => {
       /** Only this device's own label is echoed back. */
       yourDevice: participant.label,
     },
-    orders: participant.session.orders.map((order) => guestOrder(order, symbol)),
+    orders: participant.session.orders.map((order) => guestOrder(order, symbol, settings.timezone)),
     bill: guestBill(bill ?? undefined, symbol),
     currencySymbol: symbol,
+    timeZone: settings.timezone,
   });
 });

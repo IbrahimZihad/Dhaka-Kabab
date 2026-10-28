@@ -6,6 +6,7 @@ import { apiFetch } from "@/lib/client-api";
 import { formatPoisa } from "@/lib/money";
 import { cartItemCount, cartOrderPayload, cartSubtotalPoisa, clearCart } from "@/lib/cart";
 import { orderStatusLabel, submitOrder, type PlacedOrder } from "@/lib/order-submit";
+import { formatTimeInZone } from "@/lib/time";
 import { setSeat, clearSeat, type TableSeat } from "@/lib/table-seat";
 import { useSeat, useSeatHydrated } from "@/components/site/use-seat";
 import { useCartLines } from "@/components/site/use-cart";
@@ -32,6 +33,8 @@ type SessionView = {
     payableOnline: boolean;
   } | null;
   currencySymbol: string;
+  /** The restaurant's zone, so the visit times match what staff see on the board. */
+  timeZone: string;
 };
 
 type Handoff = {
@@ -227,7 +230,7 @@ export function TableOrder({ symbol }: { symbol: string }) {
             <p className="hint mt-1">
               Visit {view?.session.code ?? seat.sessionCode}
               {view ? ` · ${view.session.guestCount} guest${view.session.guestCount === 1 ? "" : "s"}` : ""}
-              {view ? ` · opened ${new Date(view.session.openedAt).toLocaleTimeString()}` : ""}
+              {view ? ` · opened ${formatTimeInZone(new Date(view.session.openedAt), view.timeZone)}` : ""}
             </p>
           </div>
           <div className="flex gap-2">
@@ -321,7 +324,7 @@ export function TableOrder({ symbol }: { symbol: string }) {
                 </div>
                 {order.timeline.length > 0 ? (
                   <p className="hint mt-2">
-                    {order.timeline.map((event) => `${orderStatusLabel(event.status)} ${new Date(event.at).toLocaleTimeString()}`).join(" → ")}
+                    {order.timeline.map((event) => `${orderStatusLabel(event.status)} ${formatTimeInZone(new Date(event.at), order.timeZone)}`).join(" → ")}
                   </p>
                 ) : null}
               </li>
@@ -367,7 +370,12 @@ export function TableOrder({ symbol }: { symbol: string }) {
             {view?.session.billRequestedAt ? "Bill requested" : "Ask for the bill"}
           </button>
           {view?.bill && view.bill.outstandingPoisa > 0 ? (
-            <GuestPayLink participantToken={seat.participantToken} outstandingPoisa={view.bill.outstandingPoisa} symbol={symbol} />
+            <GuestPayLink
+              participantToken={seat.participantToken}
+              outstandingPoisa={view.bill.outstandingPoisa}
+              symbol={symbol}
+              payableOnline={view.bill.payableOnline}
+            />
           ) : null}
         </div>
         {openOrders.length > 0 ? (
@@ -390,10 +398,12 @@ function GuestPayLink({
   participantToken,
   outstandingPoisa,
   symbol,
+  payableOnline,
 }: {
   participantToken: string;
   outstandingPoisa: number;
   symbol: string;
+  payableOnline: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -402,6 +412,18 @@ function GuestPayLink({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [handoff, setHandoff] = useState<Handoff | null>(null);
+
+  // A refusal is about the bill as it stood at that moment. The card above keeps
+  // polling, so when staff finalise the bill while the guest is still reading
+  // "not finalized yet", the sentence would contradict the status line beneath it.
+  // Reset during render on the flip only — the React pattern for a prop the state
+  // was derived from — so a refusal raised *after* the bill became payable, too
+  // many attempts say, stays on screen.
+  const [wasPayable, setWasPayable] = useState(payableOnline);
+  if (wasPayable !== payableOnline) {
+    setWasPayable(payableOnline);
+    setError(null);
+  }
 
   async function pay() {
     setBusy(true);

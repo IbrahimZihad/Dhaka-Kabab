@@ -43,6 +43,14 @@ export async function resolveProvider(): Promise<PaymentProvider> {
   }
 
   if (requested === "simulated") {
+    if (!env.allowSimulatedGateway) {
+      // Refused here rather than at the gateway page, so the guest is told to pay at
+      // the counter instead of being handed a payment screen that cannot recognise it.
+      throw new AppError(
+        "PROVIDER_NOT_CONFIGURED",
+        "Online payment is not enabled on this installation. Please pay at the counter — staff can record your payment here.",
+      );
+    }
     if (credentials && env.isProduction) {
       throw new AppError(
         "CONFLICT",
@@ -60,14 +68,16 @@ export async function providerReadiness(): Promise<ProviderReadiness> {
   const requested = settings.paymentProvider.trim().toLowerCase();
   const credentials = env.sslcommerz;
   const missing: string[] = [];
-  if (!credentials) {
-    missing.push("SSLCOMMERZ_STORE_ID", "SSLCOMMERZ_API_KEY");
-  }
+  // Only what *this* choice needs. A store that selected no gateway is not missing
+  // SSLCommerz's keys, and a screen that says it is sends staff hunting a fix they
+  // do not need. Environment names belong on staff screens, never in a guest's answer.
+  if (requested === "sslcommerz" && !credentials) missing.push("SSLCOMMERZ_STORE_ID", "SSLCOMMERZ_API_KEY");
   if (!settings.emailPublic && requested === "sslcommerz") missing.push("SMTP_HOST (for payment receipts)");
 
   return {
     configured: requested,
-    available: requested === "sslcommerz" ? Boolean(credentials) : requested === "simulated",
+    available:
+      requested === "sslcommerz" ? Boolean(credentials) : requested === "simulated" && env.allowSimulatedGateway,
     realCredentials: Boolean(credentials),
     label:
       requested === "sslcommerz"
@@ -77,8 +87,10 @@ export async function providerReadiness(): Promise<ProviderReadiness> {
             : "SSLCommerz (sandbox)"
           : "SSLCommerz — credentials missing"
         : requested === "simulated"
-          ? "Simulated gateway (development)"
-          : "Online payment disabled",
+          ? env.allowSimulatedGateway
+            ? "Simulated gateway (development)"
+            : "Simulated gateway — switched off, ALLOW_SIMULATED_GATEWAY is not set"
+          : "No gateway chosen — the counter takes every payment",
     mode: requested === "sslcommerz" ? (credentials?.mode ?? null) : requested === "simulated" ? "sandbox" : null,
     missing,
   };

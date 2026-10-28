@@ -161,6 +161,36 @@ export type CreateOrderContext = {
   ip?: string;
 };
 
+/**
+ * A replay is only honoured for the party that could have made the original
+ * submission. The key itself is written by the browser, so finding an order by
+ * its key proves nothing about who is asking: without this, anyone holding a
+ * copied key would be handed that stranger's order — and with it its
+ * `publicToken`, which opens the whole order to the guest tracking screens.
+ */
+async function replayBelongsToRequester(
+  order: { customerId: string | null; staffUserId: string | null; participantId: string | null; contactPhone: string | null },
+  input: OrderCreateInput,
+  context: CreateOrderContext,
+): Promise<boolean> {
+  const userId = context.actor?.userId ?? context.customerId ?? null;
+  if (userId) return order.customerId === userId || order.staffUserId === userId;
+
+  // An anonymous table guest has no account to compare; the seat token it re-presents
+  // is the only credential that ties this request to the seat that ordered.
+  if (input.participantToken) {
+    const guest = await prisma.tableSessionGuest.findUnique({
+      where: { participantToken: input.participantToken },
+      select: { id: true },
+    });
+    return guest !== null && order.participantId === guest.id;
+  }
+
+  // Takeaway and delivery carry neither: the phone number the guest typed is the handle.
+  const phone = input.contact?.phone;
+  return Boolean(phone) && order.contactPhone === phone;
+}
+
 export async function createOrder(input: OrderCreateInput, context: CreateOrderContext = {}) {
   const settings = await getSettings();
 
@@ -175,6 +205,14 @@ export async function createOrder(input: OrderCreateInput, context: CreateOrderC
   if (input.idempotencyKey) {
     const existing = await prisma.order.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
     if (existing) {
+      if (!(await replayBelongsToRequester(existing, input, context))) {
+        // Refused rather than re-created under a fresh key: the first order is real and
+        // already on the kitchen board, so a second submission would bill this guest twice.
+        throw new AppError(
+          "CONFLICT",
+          "We could not match that order reference to your visit. Please ask a staff member — your order may already be in the kitchen.",
+        );
+      }
       return { order: existing, replayed: true as const };
     }
   }

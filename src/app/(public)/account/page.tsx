@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { formatPoisa } from "@/lib/money";
+import { formatDateInZone, formatInZone } from "@/lib/time";
 import { prisma } from "@/lib/db";
 import { getCurrentUser, isStaffRole } from "@/lib/auth/session";
 import { myOrderHistory, myReservations } from "@/server/services/customer.service";
@@ -76,7 +77,7 @@ async function AccountBody() {
                       <Link href={`/track/${order.publicToken}`} className="font-semibold hover:text-brand">
                         {order.orderNumber}
                       </Link>
-                      <span className="hint">{new Date(order.createdAt).toLocaleDateString()}</span>
+                      <span className="hint">{formatDateInZone(new Date(order.createdAt), settings.timezone)}</span>
                     </div>
                     <p className="hint mt-1">
                       {order.items.map((item) => `${item.quantity}× ${item.nameSnapshot}`).join(", ") || "no dishes recorded"}
@@ -110,7 +111,7 @@ async function AccountBody() {
                         {reservation.code}
                       </Link>
                       <span className="hint block">
-                        {new Date(reservation.startsAt).toLocaleString()} · {reservation.partySize} guest
+                        {formatInZone(new Date(reservation.startsAt), settings.timezone)} · {reservation.partySize} guest
                         {reservation.partySize === 1 ? "" : "s"}
                         {reservation.tables.length ? ` · table ${reservation.tables.map((t) => t.table.label).join(", ")}` : ""}
                       </span>

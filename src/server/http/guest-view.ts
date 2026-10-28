@@ -74,6 +74,7 @@ export function guestOrder(
     table?: { label: string } | null;
   },
   symbol: string,
+  timeZone: string,
 ) {
   return {
     id: order.id,
@@ -94,6 +95,13 @@ export function guestOrder(
       at: event.createdAt.toISOString(),
     })),
     totals: guestTotals(order, symbol),
+    /**
+     * The restaurant's clock travels with the order rather than being read from the
+     * browser's. A guest in another country, or a server whose zone is not Asia/Dhaka,
+     * would otherwise print "Ready at 3:41 PM" beside a kitchen board saying 20:41 —
+     * and a collection time the guest misreads by hours is a cold takeaway.
+     */
+    timeZone,
   };
 }
 

@@ -29,8 +29,10 @@ test("home page renders the restaurant's own identity, hours and open state", as
 
   await expect(page.getByRole("heading", { level: 1, name: settings.name, exact: true })).toBeVisible();
 
-  // The hero badge and the header badge are two renderings of one setting.
-  await expect(page.getByText(open ? "Open now" : "Closed right now", { exact: true })).toBeVisible();
+  // The hero badge and the header badge are two renderings of one setting, and the
+  // header also carries the restaurant name, so an unscoped "Open now" is ambiguous
+  // while the room is serving. Each rendering gets its own scoped assertion.
+  await expect(page.locator("main").getByText(open ? "Open now" : "Closed right now", { exact: true })).toBeVisible();
   await expect(page.locator("header").getByText(open ? "Open now" : "Closed", { exact: true })).toBeVisible();
 
   await expect(page.getByText("Opening hours", { exact: true })).toBeVisible();

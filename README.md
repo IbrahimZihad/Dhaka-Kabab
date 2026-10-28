@@ -30,7 +30,10 @@ What is real and what is not, stated up front:
 | Staff console | `/admin`, `/admin/floor`, `/admin/orders[/id]`, `/admin/bills[/id]`, `/admin/menu[/id]`, `/admin/reservations[/id]`, `/admin/customers[/id]`, `/admin/staff[/id]`, `/admin/settings`, `/admin/reports`, `/admin/audit`, `/admin/chat[/token]`, `/admin/qr` | Staff roles |
 | JSON API | 81 route handlers under `src/app/api/**` | The above, plus QR/gateway callbacks |
 
-Health check: `GET /api/health` → `{"ok":true,"data":{"status":"ok","database":true,"gateway":"sandbox","time":"…"}}`.
+Health check: `GET /api/health` → `{"ok":true,"data":{"status":"ok","database":true,"time":"…"}}`. It
+reports liveness only: whether a gateway is configured, and in which mode, is staff-facing
+(`/admin/settings`, the dashboard and `/api/admin/dashboard`), not something an anonymous probe should
+hand to an outsider.
 
 ---
 
@@ -66,6 +69,11 @@ All configuration is environment-driven; nothing is read from the browser. `.env
 placeholders only — no populated env file is committed, and `.gitignore` excludes `.env`,
 `.env.local` and `.env.*.local`.
 
+Precedence, taken from `@next/env` itself: the shell's own environment, then `.env.<mode>.local`,
+`.env.local`, `.env.<mode>`, `.env` — and the **first** definition of a key wins. A key repeated as a
+blank line in a higher-priority file therefore switches that capability off even though `.env` looks
+correct; `npm run env:check` names those keys without printing any value.
+
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Application database. Never exposed to the client. |
@@ -75,9 +83,11 @@ placeholders only — no populated env file is committed, and `.gitignore` exclu
 | `SESSION_MAX_AGE_SECONDS` | no (43200) | Session lifetime. |
 | `NEXT_PUBLIC_REALTIME_POLL_INTERVAL_MS` | no (2500) | Floor/kitchen refresh interval; floored at 1000 ms. |
 | `UPLOAD_DIR` | no (`./storage/uploads`) | Where menu image uploads are written, server side only. |
-| `SSLCOMMERZ_STORE_ID` / `SSLCOMMERZ_API_KEY` | for real money | When either is missing the simulated provider is used and labelled as such. |
+| `TRUSTED_PROXY_HOPS` | no (`0`) | How many proxies sit in front of this process. At `0` no `X-Forwarded-For` is believed and every request is addressed as `unknown`; at *n* the app reads the entry the nth proxy from the right appended. See §14. |
+| `SSLCOMMERZ_STORE_ID` / `SSLCOMMERZ_API_KEY` | for real money | Without **both**, online payment is unavailable: guests are pointed at the counter and staff record the payment against the bill. |
 | `SSLCOMMERZ_MODE` | no (`sandbox`) | `sandbox` \| `live`. |
 | `SSLCOMMERZ_BASE_URL` | no | Overrides the gateway host if SSLCommerz assigns a different one. |
+| `ALLOW_SIMULATED_GATEWAY` | no (off) | Switches the stand-in gateway on for development and the e2e suite. It must stay unset in production: with real credentials present the registry refuses it anyway, but a button that pretends money moved has no place on a live till. |
 | `SMTP_HOST` (+ `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`) | no | Without `SMTP_HOST`, notifications are recorded and never claimed as sent. |
 | `AI_PROVIDER` / `AI_BASE_URL` / `AI_MODEL` / `AI_API_KEY` (+ `AI_MAX_OUTPUT_TOKENS`, `AI_REQUEST_TIMEOUT_MS`) | no | Server-side only. `OPENAI_API_KEY` / `OPENAI_MODEL` are accepted as aliases. |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | for `admin:create` | Read only by that script; it refuses to run without them and never prints the password. |
@@ -201,10 +211,13 @@ integration-tested in `tests/integration/billing.test.ts`.
   `PENDING`; status changes only when the server verifies the gateway's callback/verification call —
   signature checked, transaction id matched to the stored row, amount matched, and the event recorded
   in `payment_events`. A forged or unknown callback is refused and leaves the money state untouched.
-- Without gateway credentials the app offers the `simulated` provider. Its screens, its payment rows
-  and its receipts say *simulated*; a simulated payment is never described as money received. The
-  simulated "pay" endpoint is **switched off in production** and refuses any payment that was handed
-  to a real gateway, so a demo button can never move live money.
+- The stand-in gateway is an **explicit opt-in**, not a fallback. It runs only when
+  `ALLOW_SIMULATED_GATEWAY` is set *and* the payment setting names `simulated`; otherwise `resolveProvider()`
+  refuses with a message that sends the guest to the counter, and `/api/health` plus `/admin/settings`
+  report the same. Without `SSLCOMMERZ_STORE_ID`/`API_KEY` online payment is simply unavailable, because
+  a button that pretends money moved has no place on a live till. Where it is enabled, its screens,
+  payment rows and receipts say *simulated*, every row is flagged `isDemo`, reports keep simulated
+  takings out of real revenue, and it refuses any reference that was handed to a real gateway.
 - Refunds go through `payments/refund` (permission `payment:refund`), are recorded as `Refund` rows,
   and flip the bill to `REFUNDED` only when the refunded amount covers what was paid.
 
@@ -302,10 +315,31 @@ npx tsc --noEmit && npm run lint
    Do **not** run `npm run db:seed` against real data — it is demo content and refuses production
    unless `SEED_ALLOW_PRODUCTION=1`.
 8. `npm run build && npm run start` behind a TLS-terminating proxy; set `NODE_ENV=production`.
-9. Replace the seeded business identity — name, address, phone, email, hours, charges and delivery
-   fee — in `/admin/settings`. The seeded values are marked demo precisely so they are never mistaken
-   for the real restaurant's.
-10. Add a scheduled job that calls the queue drain and the reservation reminders (see known gaps).
+   Set `TRUSTED_PROXY_HOPS` to the number of proxies in front of the process — `1` for nginx or Caddy
+   on the same box, `2` for a CDN plus an origin proxy. Left at `0` the app cannot see the visitor's
+   address at all and the IP-keyed limits become one restaurant-wide ceiling.
+9. Confirm `ALLOW_SIMULATED_GATEWAY` is **not** set in the production environment, and that the
+   payment setting names `sslcommerz`, not `simulated`. `/api/health` and `/admin/settings` both say
+   which provider is live.
+10. Replace the seeded business identity — name, address, phone, email, hours, charges and delivery
+    fee — in `/admin/settings`. The seeded values are marked demo precisely so they are never mistaken
+    for the real restaurant's.
+11. Wipe the seeded history if the database was ever seeded, in the order the foreign keys allow
+    (`Refund` → `Payment` → `Bill` → `Order` → `TableSession` → `Reservation` → `ChatMessage` →
+    `ChatConversation`). Everything the seed flags is either `isDemo = true` on a transactional row or
+    a demo-marked account, so this is the check to run first, on a **staging copy**, before deleting:
+
+    ```sql
+    select 'order' k, count(*) from orders where "isDemo"
+    union all select 'bill', count(*) from bills where "isDemo"
+    union all select 'payment', count(*) from payments where "isDemo"
+    union all select 'refund', count(*) from refunds where "isDemo"
+    union all select 'reservation', count(*) from reservations where "isDemo";
+    ```
+
+    Menu, floor tables and settings are configuration a real restaurant keeps and edits, not demo
+    rows: deleting them removes the room the first service will need.
+12. Add a scheduled job that calls the queue drain and the reservation reminders (see known gaps).
 
 ## 14. Security posture
 
@@ -317,7 +351,18 @@ npx tsc --noEmit && npm run lint
 - Rate limits on 14 endpoints — login, register, password reset start and complete, order submission,
   reservation create and cancel, chat and escalation, table join, bill request, gateway callback,
   guest payment initiation and the simulated-payment completion (`src/lib/auth/rate-limit.ts`), keyed
-  by IP plus the identifier being attacked.
+  by IP plus the identifier being attacked. The limiter is **in-process memory**: one Node instance
+  counts its own window, so a multi-instance deployment multiplies the ceiling. Move the map to a
+  shared store before scaling out.
+- **The client does not choose the address we act on.** `clientIp()` in `src/lib/api.ts` ignores
+  `X-Forwarded-For` and `X-Real-IP` unless `TRUSTED_PROXY_HOPS` says how many proxies sit in front of
+  the process, and then reads the entry *that* many from the right — the ones our own proxies
+  appended. The leftmost entry, which is what a naive reader takes, is written by whoever sent the
+  request, so trusting it lets a spammer mint a fresh bucket per request and lets an attacker attribute
+  anything to anyone in the audit log. At `0`, and whenever the chain is shorter than the declared
+  hops, the address is `unknown`; login keeps its per-account ceiling, and the address-keyed buckets
+  become one restaurant-wide ceiling rather than a per-visitor one — which is why the hop count has to
+  be set for real deployments.
 - **Cross-origin writes are refused centrally.** `route()` in `src/lib/api.ts` applies the same-origin
   check to every non-GET handler, so an individual handler cannot forget it; the only opt-out is
   `allowForeignOrigin`, used by the gateway callback, which is genuinely called by the payment
@@ -376,3 +421,5 @@ npx tsc --noEmit && npm run lint
 | Seed says `history: demo transactions already present` | Intentional: demo financial history is created once and never overwritten. |
 | Menu prices show ৳0 | `pricePoisa` accepts 0 because a ৳0 customization delta is legitimate (a free option); on an *item* it reads as "this dish is free". Set the real price in `/admin/menu/[id]`. |
 | `simulated payment` label on checkout | Expected without `SSLCOMMERZ_STORE_ID`/`API_KEY`; add them for a real gateway. |
+| `Online payment is not enabled on this installation` | The payment setting names a provider the installation cannot use: either `sslcommerz` without both credentials, or `simulated` while `ALLOW_SIMULATED_GATEWAY` is unset. `/admin/settings` says which, and `providerReadiness()` lists the missing keys. |
+| Every audit row reads `ip = unknown` | `TRUSTED_PROXY_HOPS` is `0`, so no forwarded address is believed. Set it to the real hop count; a value that does not match the deployment is worse than `0`, because it re-opens the header to whoever wrote it. |

@@ -63,7 +63,8 @@ export const settingsInputSchema = z.object({
   autoConfirmOrders: z.boolean().default(true),
 
   enablePartialPayments: z.boolean().default(true),
-  paymentProvider: z.enum(["simulated", "sslcommerz"]),
+  /** "none" is the safe state: no gateway is contacted and the counter takes the bill. */
+  paymentProvider: z.enum(["none", "simulated", "sslcommerz"]),
   paymentStoreId: z.string().trim().max(80).nullish(),
 
   chatbotEnabled: z.boolean(),
@@ -75,7 +76,10 @@ export const settingsInputSchema = z.object({
 });
 
 /**
- * A provider switch must not claim a live gateway without credentials, so the
- * settings service re-checks this before persisting (see assertProviderUsable).
+ * A provider switch is persisted whatever the environment holds: the refusal for a
+ * gateway that cannot be reached happens when a guest tries to pay
+ * (`resolveProvider`), and the settings screen warns before the save. Storing the
+ * owner's choice and then silently rewriting it would make the audit trail of this
+ * row disagree with what was on the screen.
  */
 export type SettingsInput = z.infer<typeof settingsInputSchema>;

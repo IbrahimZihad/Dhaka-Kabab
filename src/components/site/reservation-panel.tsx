@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { apiFetch } from "@/lib/client-api";
+import { formatInZone } from "@/lib/time";
 
 export type ReservationView = {
   code: string;
@@ -14,6 +15,8 @@ export type ReservationView = {
   tables: string[];
   specialRequests: string | null;
   canChange: boolean;
+  /** Shown in the restaurant's zone, so it matches the slot grid the guest picked from. */
+  timeZone: string;
 };
 
 const MEANING: Record<string, string> = {
@@ -78,7 +81,7 @@ export function ReservationPanel({ view, token }: { view: ReservationView; token
         </div>
         <div>
           <dt className="label">When</dt>
-          <dd>{starts.toLocaleString()}</dd>
+          <dd>{formatInZone(starts, view.timeZone)}</dd>
         </div>
         <div>
           <dt className="label">Held for</dt>

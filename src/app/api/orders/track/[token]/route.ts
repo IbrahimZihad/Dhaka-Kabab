@@ -11,5 +11,5 @@ import { guestOrder } from "@/server/http/guest-view";
 export const GET = route(async (_request: Request, ctx: { params: Promise<{ token: string }> }) => {
   const { token } = await ctx.params;
   const [order, settings] = await Promise.all([getOrderByPublicToken(token), getSettings()]);
-  return ok({ order: guestOrder(order, settings.currencySymbol), currencySymbol: settings.currencySymbol });
+  return ok({ order: guestOrder(order, settings.currencySymbol, settings.timezone), currencySymbol: settings.currencySymbol });
 });

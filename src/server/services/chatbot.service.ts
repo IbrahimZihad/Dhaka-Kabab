@@ -148,11 +148,17 @@ async function buildGrounding(question: string): Promise<Grounding> {
   if (settings.serviceChargeBps > 0) charges.push(`${bpsToPercentLabel(settings.serviceChargeBps)}% service charge`);
   if (settings.vatBps > 0) charges.push(`${bpsToPercentLabel(settings.vatBps)}% VAT`);
 
-  let gatewayLabel = "no online payment";
+  /**
+   * Whether a guest may pay online at all, and what to call the gateway when they
+   * may. The probe runs in a `try` because a settings row that names a gateway this
+   * server cannot build must not stop the assistant talking about the menu; the
+   * sentence below then falls back to the counter.
+   */
+  let gateway: Awaited<ReturnType<typeof providerReadiness>> | null = null;
   try {
-    gatewayLabel = (await providerReadiness()).label;
+    gateway = await providerReadiness();
   } catch {
-    gatewayLabel = "online payment not configured";
+    gateway = null;
   }
 
   const wantsAvailability = /reserv|book|table/.test(question.toLowerCase());
@@ -208,9 +214,11 @@ async function buildGrounding(question: string): Promise<Grounding> {
       delivery: settings.allowDelivery,
       deliveryFee: formatPoisa(settings.deliveryFeePoisa, { symbol: settings.currencySymbol }),
       charges: charges.length > 0 ? charges.join(" and ") : "no service charge or VAT is added",
-      payments: `cash, card and mobile banking at the counter; online payment via ${gatewayLabel}${
-        settings.enablePartialPayments ? "; partial payments are allowed" : "; the full bill must be paid at once"
-      }`,
+      payments: `cash, card and mobile banking at the counter; ${
+        gateway?.available
+          ? `online payment via ${gateway.label}`
+          : "no online payment on this site, so bills are settled at the counter"
+      }${settings.enablePartialPayments ? "; partial payments are allowed" : "; the full bill must be paid at once"}`,
     },
     reservation: wantsAvailability ? await reservationFactsForChat(dateKey ?? undefined, partySize ?? undefined) : null,
     availability,
@@ -573,7 +581,11 @@ export async function escalateConversation(conversationToken: string, reason: st
   await queueNotification({
     type: "CHAT_ESCALATION",
     subject: "A guest asked to speak to a manager",
-    bodyText: `Chat ${conversation.publicToken}: ${reason ?? "no reason given"}. Open the chat inbox in the admin panel.`,
+    // The conversation's public token is what lets *anyone* read that guest's chat,
+    // and a notification body is copied into mail servers, inboxes and forwards on the
+    // way to staff. They reach the same conversation through the admin panel, which
+    // knows who they are, so the token has no business being in this sentence.
+    bodyText: `A guest asked for a manager: ${reason ?? "no reason given"}. Open the chat inbox in the admin panel — escalated conversations sit at the top.`,
     relatedKind: "ChatConversation",
     relatedId: conversation.id,
     staffAudience: true,

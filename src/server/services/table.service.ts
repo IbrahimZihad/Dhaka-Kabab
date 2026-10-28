@@ -571,7 +571,11 @@ export async function getSessionForGuest(participantToken: string, client: Db = 
           table: true,
           guests: true,
           orders: { orderBy: { createdAt: "asc" }, include: { items: { orderBy: { createdAt: "asc" } } } },
-          bills: { where: { status: { in: ["OPEN", "FINALIZED"] } }, orderBy: { createdAt: "desc" }, take: 1 },
+          // The guest's own bill, settled included: a guest who paid online and comes
+          // back to check is owed the receipt on their screen. Left out, the card
+          // falls back to "no bill has been drawn up" and offers to ask for one again
+          // for a visit they have already paid for.
+          bills: { where: { status: { in: ["OPEN", "FINALIZED", "SETTLED"] } }, orderBy: { createdAt: "desc" }, take: 1 },
         },
       },
     },
