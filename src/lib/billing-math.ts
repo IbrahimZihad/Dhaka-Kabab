@@ -30,6 +30,9 @@ export type Totals = {
 
 export function computeTotals(input: TotalsInput): Totals {
   const subtotal = sumPoisa(...input.lines.map((line) => line.lineTotalPoisa));
+  // A negative line would silently turn a bill into a credit, so the maths refuses
+  // the state instead of clamping around it.
+  if (subtotal < 0) throw new Error("Subtotal cannot be negative; check the line prices and quantities.");
   const discount = clamp(input.discountPoisa ?? 0, 0, subtotal);
 
   // Charges are computed on the discounted net, never on the gross.
@@ -62,6 +65,7 @@ function clamp(value: number, min: number, max: number): number {
 
 export function lineTotal(unitPricePoisa: Poisa, quantity: number): Poisa {
   if (!Number.isInteger(unitPricePoisa)) throw new Error("Unit price must be in whole poisa.");
+  if (unitPricePoisa < 0) throw new Error("Unit price cannot be negative; a line is never a credit.");
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
     throw new Error("Quantity must be a whole number between 1 and 999.");
   }
@@ -82,7 +86,10 @@ export function derivePaymentStatus({ totalPoisa, paidPoisa, refundedPoisa = 0 }
   | "PAID"
   | "REFUNDED" {
   if (refundedPoisa > 0 && refundedPoisa >= paidPoisa) return "REFUNDED";
+  // A bill discounted to nothing owes nothing; leaving it UNPAID forever would
+  // keep a settled table on the outstanding list.
+  if (totalPoisa <= 0) return "PAID";
   if (paidPoisa <= 0) return "UNPAID";
-  if (paidPoisa + 0 >= totalPoisa) return "PAID";
+  if (paidPoisa >= totalPoisa) return "PAID";
   return "PARTIAL";
 }

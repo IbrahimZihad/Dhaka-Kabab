@@ -1,5 +1,6 @@
 import { prisma, type Db } from "@/lib/db";
 import { writeAudit } from "@/lib/audit";
+import type { OpeningHourRule } from "@/lib/time";
 import type { RestaurantSettings } from "@prisma/client";
 
 /**
@@ -9,7 +10,11 @@ import type { RestaurantSettings } from "@prisma/client";
 
 export const SETTINGS_ID = "default";
 
-export const DEFAULT_SETTINGS: Omit<RestaurantSettings, "id" | "createdAt" | "updatedAt" | "updatedByUserId"> = {
+// `openingHours` is narrowed to its real shape because Prisma's stored Json column
+// is typed as possibly-null, which a create/update input does not accept.
+export const DEFAULT_SETTINGS: Omit<RestaurantSettings, "id" | "createdAt" | "updatedAt" | "updatedByUserId" | "openingHours"> & {
+  openingHours: OpeningHourRule[];
+} = {
   name: "Dhaka Kabab",
   logoUrl: null,
   addressLine1: "",
@@ -55,6 +60,10 @@ export const DEFAULT_SETTINGS: Omit<RestaurantSettings, "id" | "createdAt" | "up
 
 // Read once per render tree would be dozens of round trips on a dashboard page.
 // Values change on the order of times-per-day, so a short TTL is enough.
+//
+// The TTL uses the monotonic clock, not the wall clock: it measures how long this
+// process has held the value, and a wall-clock read inside a render path is an
+// unstable value the prerender rightly refuses.
 let cache: { value: RestaurantSettings; expiresAt: number } | null = null;
 const CACHE_MS = 10_000;
 
@@ -68,14 +77,14 @@ export async function ensureSettings(client: Db = prisma): Promise<RestaurantSet
   const created = await client.restaurantSettings.create({
     data: { id: SETTINGS_ID, ...DEFAULT_SETTINGS },
   });
-  cache = { value: created, expiresAt: Date.now() + CACHE_MS };
+  cache = { value: created, expiresAt: performance.now() + CACHE_MS };
   return created;
 }
 
 export async function getSettings(client: Db = prisma): Promise<RestaurantSettings> {
-  if (cache && cache.expiresAt > Date.now()) return cache.value;
+  if (cache && performance.now() < cache.expiresAt) return cache.value;
   const settings = await ensureSettings(client);
-  cache = { value: settings, expiresAt: Date.now() + CACHE_MS };
+  cache = { value: settings, expiresAt: performance.now() + CACHE_MS };
   return settings;
 }
 
@@ -128,6 +137,8 @@ export function publicSettings(settings: RestaurantSettings) {
     allowDineIn: settings.allowDineIn,
     allowTakeaway: settings.allowTakeaway,
     allowDelivery: settings.allowDelivery,
+    /** An advertised delivery charge is public; the gateway keys beside it are not. */
+    deliveryFeePoisa: settings.deliveryFeePoisa,
     chatbotEnabled: settings.chatbotEnabled,
   };
 }

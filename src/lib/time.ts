@@ -126,16 +126,34 @@ export function rulesForDay(rules: OpeningHourRule[], weekday: number): OpeningH
   return rules.filter((rule) => rule.days.includes(weekday));
 }
 
+const MINUTES_PER_DAY = 1440;
+
+/** Minutes since local midnight for a "HH:MM" label. */
+function toMinutes(label: string): number {
+  const [hours, minutes] = label.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+/**
+ * Is the restaurant open at this instant?
+ *
+ * A rule whose close is not later than its open describes a service that rolls
+ * past midnight — "Friday 20:00 to 01:00" ends on Saturday morning. Those early
+ * hours therefore belong to the *previous* day's rule, which is the only reading
+ * under which both the badge and the booking guard agree with what staff wrote.
+ */
 export function isOpenAt(instant: Date, rules: OpeningHourRule[], timeZone: string): boolean {
   const parts = zonedParts(instant, timeZone);
   const minutes = parts.hour * 60 + parts.minute;
   for (const rule of rulesForDay(rules, parts.weekday)) {
-    const [oh, om] = rule.opens.split(":").map(Number);
-    const [ch, cm] = rule.closes.split(":").map(Number);
-    const open = oh * 60 + om;
-    const close = ch * 60 + cm;
-    // Closing before opening means the range rolls past midnight.
-    if (close > open ? minutes >= open && minutes < close : minutes >= open || minutes < close) return true;
+    const open = toMinutes(rule.opens);
+    const close = toMinutes(rule.closes);
+    if (close > open ? minutes >= open && minutes < close : minutes >= open) return true;
+  }
+  const yesterday = (parts.weekday + 6) % 7;
+  for (const rule of rulesForDay(rules, yesterday)) {
+    if (toMinutes(rule.closes) > toMinutes(rule.opens)) continue;
+    if (minutes < toMinutes(rule.closes)) return true;
   }
   return false;
 }
@@ -152,22 +170,39 @@ export function slotStartsForDay(
 ): string[] {
   const weekday = zonedParts(wallToUtc(dateKey, "12:00", options.timeZone), options.timeZone).weekday;
   const dayRules = rulesForDay(rules, weekday);
-  if (dayRules.length === 0) return [];
 
   const now = options.now ?? new Date();
-  const minStart = minutesBetween(now, wallToUtc(dateKey, "00:00", options.timeZone)) - options.cutoffMinutes;
+  // A slot at wall-clock minute `m` opens `m` minutes after this day's midnight,
+  // so it is reachable when `m` is at least the cutoff away from now. On a later
+  // date this is negative and every opening slot stays on offer.
+  const minStart = options.cutoffMinutes - minutesBetween(now, wallToUtc(dateKey, "00:00", options.timeZone));
   const slot = Math.max(5, options.slotMinutes);
   const starts: string[] = [];
 
   for (const rule of dayRules) {
-    const [oh, om] = rule.opens.split(":").map(Number);
-    const [ch, cm] = rule.closes.split(":").map(Number);
-    const open = oh * 60 + om;
-    const close = ch * 60 + cm;
-    const lastStart = close - options.durationMinutes;
-    for (let minutes = open; minutes <= lastStart; minutes += slot) {
+    const open = toMinutes(rule.opens);
+    const close = toMinutes(rule.closes);
+    // A rolling range is measured on an axis that runs past midnight. A start
+    // after midnight is tomorrow's clock, so it is offered on that date instead.
+    const lastStart = (close > open ? close : close + MINUTES_PER_DAY) - options.durationMinutes;
+    for (let minutes = open; minutes <= lastStart && minutes < MINUTES_PER_DAY; minutes += slot) {
       if (minutes < minStart) continue;
       const label = `${String(Math.floor(minutes / 60) % 24).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+      if (!starts.includes(label)) starts.push(label);
+    }
+  }
+
+  // Last night's service can still be seated early on this date: a Friday
+  // 20:00-01:00 rule offers Saturday 00:00 when the whole seating window fits
+  // before 01:00.
+  for (const rule of rulesForDay(rules, (weekday + 6) % 7)) {
+    const open = toMinutes(rule.opens);
+    const close = toMinutes(rule.closes);
+    if (close > open) continue;
+    const lastStart = close - options.durationMinutes;
+    for (let minutes = 0; minutes <= lastStart; minutes += slot) {
+      if (minutes < minStart) continue;
+      const label = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
       if (!starts.includes(label)) starts.push(label);
     }
   }

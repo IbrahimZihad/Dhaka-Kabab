@@ -1,26 +1,241 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * Brand tokens for the public site and the staff screens. Colour is the only
+ * thing defined here — every layout decision stays in the component markup so a
+ * change does not ripple through two files.
+ */
+@theme {
+  --color-ink: #1b1410;
+  --color-ink-soft: #4a4038;
+  --color-ink-muted: #7a6f66;
+  --color-paper: #fdfaf5;
+  --color-paper-raised: #ffffff;
+  --color-line: #e7ded2;
+  --color-brand: #b8471f;
+  --color-brand-dark: #8f3617;
+  --color-saffron: #e8a33d;
+  --color-pistachio: #4f7a3f;
+  --color-danger: #a3231e;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- buttons -------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.6rem;
+  border: 1px solid transparent;
+  padding: 0.62rem 1.05rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.1;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  text-decoration: none;
+}
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn:focus-visible {
+  outline: 2px solid var(--color-saffron);
+  outline-offset: 2px;
+}
+
+.btn-primary {
+  background: var(--color-brand);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-brand-dark);
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--color-ink);
+  border-color: var(--color-line);
+}
+.btn-outline:hover:not(:disabled) {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--color-ink-soft);
+}
+.btn-ghost:hover:not(:disabled) {
+  color: var(--color-brand);
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--color-danger);
+  border-color: currentColor;
+}
+
+.btn-sm {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  border-radius: 0.45rem;
+}
+
+/* --- surfaces ------------------------------------------------------------- */
+
+.card {
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-line);
+  border-radius: 0.9rem;
+}
+
+.card-hover:hover {
+  border-color: var(--color-saffron);
+}
+
+.shell {
+  width: 100%;
+  max-width: 78rem;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 999px;
+  padding: 0.16rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 1px solid var(--color-line);
+  background: var(--color-paper);
+  color: var(--color-ink-soft);
+}
+.badge-open {
+  border-color: color-mix(in srgb, var(--color-pistachio) 45%, white);
+  background: color-mix(in srgb, var(--color-pistachio) 12%, white);
+  color: var(--color-pistachio);
+}
+.badge-closed {
+  border-color: color-mix(in srgb, var(--color-danger) 40%, white);
+  background: color-mix(in srgb, var(--color-danger) 8%, white);
+  color: var(--color-danger);
+}
+.badge-brand {
+  border-color: color-mix(in srgb, var(--color-brand) 40%, white);
+  background: color-mix(in srgb, var(--color-brand) 10%, white);
+  color: var(--color-brand);
+}
+
+/* --- form controls -------------------------------------------------------- */
+
+.label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  margin-bottom: 0.3rem;
+}
+
+.input,
+.select,
+.textarea {
+  width: 100%;
+  border-radius: 0.55rem;
+  border: 1px solid var(--color-line);
+  background: #fff;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.9rem;
+  color: var(--color-ink);
+}
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--color-saffron) 70%, white);
+  outline-offset: 1px;
+  border-color: var(--color-saffron);
+}
+.textarea {
+  min-height: 6rem;
+  resize: vertical;
+}
+.input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.hint {
+  font-size: 0.78rem;
+  color: var(--color-ink-muted);
+}
+
+.notice {
+  border-radius: 0.7rem;
+  border: 1px solid var(--color-line);
+  background: var(--color-paper);
+  padding: 0.75rem 0.9rem;
+  font-size: 0.85rem;
+}
+.notice-error {
+  border-color: color-mix(in srgb, var(--color-danger) 35%, white);
+  background: color-mix(in srgb, var(--color-danger) 7%, white);
+  color: var(--color-danger);
+}
+.notice-ok {
+  border-color: color-mix(in srgb, var(--color-pistachio) 35%, white);
+  background: color-mix(in srgb, var(--color-pistachio) 8%, white);
+  color: var(--color-pistachio);
+}
+
+/* --- text helpers --------------------------------------------------------- */
+
+.muted {
+  color: var(--color-ink-muted);
+}
+.soft {
+  color: var(--color-ink-soft);
+}
+.price {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.skeleton {
+  border-radius: 0.5rem;
+  background: linear-gradient(90deg, var(--color-line) 25%, var(--color-paper) 50%, var(--color-line) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
 }

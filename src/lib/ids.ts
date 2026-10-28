@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 /**
  * Unpredictable, URL-safe public identifiers. Sequential database ids never
@@ -20,8 +20,7 @@ export function randomShortCode(length = 6): string {
 }
 
 /** Deterministic fingerprint of a gateway callback body, used to spot duplicates. */
-export async function payloadFingerprint(payload: unknown): Promise<string> {
-  const { createHash } = await import("node:crypto");
+export function payloadFingerprint(payload: unknown): string {
   const normalized =
     typeof payload === "string" ? payload : JSON.stringify(payload, Object.keys(payload ?? {}).sort());
   return createHash("sha256").update(normalized).digest("hex").slice(0, 32);

@@ -8,7 +8,13 @@ export const POISA_PER_UNIT = 100;
 export type Poisa = number;
 
 export function bdtToPoisa(bdt: number | string): Poisa {
-  const value = typeof bdt === "string" ? Number(bdt.replace(/[^\d.\-]/g, "")) : bdt;
+  const cleaned = typeof bdt === "string" ? bdt.replace(/[^\d.\-]/g, "") : bdt;
+  // A string that carried no digits ("abc", "৳", "") would otherwise become 0 and
+  // sell a dish for nothing; `parseMoneyInput` is the lenient entry point instead.
+  if (typeof cleaned === "string" && !/\d/.test(cleaned)) {
+    throw new Error(`Cannot convert ${JSON.stringify(bdt)} to a monetary amount.`);
+  }
+  const value = typeof cleaned === "string" ? Number(cleaned) : cleaned;
   if (!Number.isFinite(value)) throw new Error(`Cannot convert ${bdt} to a monetary amount.`);
   // Multiply first, then round, so 0.1 * 100 does not land on 10.000000000000002.
   return Math.round(value * POISA_PER_UNIT);

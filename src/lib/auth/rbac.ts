@@ -29,6 +29,7 @@ export const PERMISSIONS = [
   "payment:refund",
   "customer:view",
   "customer:manage",
+  "chat:view",
   "staff:manage",
   "settings:manage",
   "report:view",
@@ -54,6 +55,7 @@ const CASHIER: Permission[] = [
   "payment:record",
   "payment:view",
   "customer:view",
+  "chat:view",
 ];
 
 const MANAGER: Permission[] = [

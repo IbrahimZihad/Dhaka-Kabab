@@ -100,6 +100,8 @@ enum NotificationChannel {
 
 enum NotificationStatus {
   QUEUED
+  /// Claimed by a worker so a retried request cannot send the same message twice.
+  SENDING
   SENT
   FAILED
   SKIPPED
@@ -117,6 +119,9 @@ enum NotificationType {
   PAYMENT_SUCCEEDED
   PAYMENT_FAILED
   BILL_SETTLED
+  /// Guest tapped "Ask for the bill" at the table.
+  BILL_REQUESTED
+  CHAT_ESCALATION
 }
 
 enum ChatRole {
@@ -141,11 +146,14 @@ model User {
   role          UserRole       @default(CUSTOMER)
   isActive      Boolean        @default(true)
   address       String?
-  lastLoginAt   DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  /// Internal note from staff (preferences, allergies, standing orders). Never shown to the customer.
+  notes         String?
+  lastLoginAt   DateTime? @db.Timestamptz(3)
+  createdAt     DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @db.Timestamptz(3)
 
   sessions        Session[]
+  resetTokens     PasswordResetToken[]
   openedSessions  TableSession[]  @relation("SessionOpenedBy")
   closedSessions  TableSession[]  @relation("SessionClosedBy")
   ordersCreated   Order[]         @relation("OrderCustomer")
@@ -168,13 +176,27 @@ model Session {
   id        String   @id
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  expiresAt DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
   ipHash    String?
 
   @@index([userId])
   @@index([expiresAt])
   @@map("auth_sessions")
+}
+
+/// One-time password reset link. Only the hash of the URL token is stored.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime @db.Timestamptz(3)
+  usedAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, expiresAt])
+  @@map("password_reset_tokens")
 }
 
 /// Singleton row (id = "default"). Non-secret configuration only.
@@ -237,8 +259,8 @@ model RestaurantSettings {
 
   updatedByUserId String?
   updatedBy       User?     @relation("SettingsUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
 
   @@map("restaurant_settings")
 }
@@ -251,9 +273,9 @@ model MenuCategory {
   imageUrl    String?
   sortOrder   Int       @default(0)
   isActive    Boolean   @default(true)
-  archivedAt  DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  archivedAt  DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
 
   items MenuItem[]
 
@@ -279,9 +301,9 @@ model MenuItem {
   spicyLevel  Int       @default(0)
   servesInfo  String?
   sortOrder   Int       @default(0)
-  archivedAt  DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  archivedAt  DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
 
   customizationGroups MenuItemCustomizationGroup[]
   orderItems          OrderItem[]
@@ -335,9 +357,9 @@ model RestaurantTable {
   /// Staff member currently responsible for the table (optional).
   waiterUserId   String?
   waiter         User?       @relation("TableWaiter", fields: [waiterUserId], references: [id], onDelete: SetNull)
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
-  tokenRotatedAt DateTime?
+  createdAt      DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime    @updatedAt @db.Timestamptz(3)
+  tokenRotatedAt DateTime? @db.Timestamptz(3)
 
   sessions        TableSession[]
   reservations    ReservationTableAssignment[]
@@ -363,10 +385,13 @@ model TableSession {
   openedBy     User?              @relation("SessionOpenedBy", fields: [openedByUserId], references: [id], onDelete: SetNull)
   closedByUserId String?
   closedBy     User?              @relation("SessionClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
-  openedAt     DateTime           @default(now())
-  closedAt     DateTime?
+  openedAt     DateTime           @default(now()) @db.Timestamptz(3)
+  closedAt     DateTime? @db.Timestamptz(3)
   closeReason  String?
   notes        String?
+  /// When the table last asked for the bill. The floor dashboard works through
+  /// these; finalising the bill clears it.
+  billRequestedAt DateTime? @db.Timestamptz(3)
 
   guests   TableSessionGuest[]
   orders   Order[]
@@ -384,8 +409,8 @@ model TableSessionGuest {
   session        TableSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   participantToken String     @unique
   label          String?
-  joinedAt       DateTime     @default(now())
-  lastSeenAt     DateTime     @default(now())
+  joinedAt       DateTime     @default(now()) @db.Timestamptz(3)
+  lastSeenAt     DateTime     @default(now()) @db.Timestamptz(3)
 
   orders Order[]
 
@@ -430,20 +455,20 @@ model Order {
   specialInstructions String?
   internalNote        String?
   cancelledReason     String?
-  confirmedAt         DateTime?
-  preparingAt         DateTime?
-  readyAt             DateTime?
-  servedAt            DateTime?
-  completedAt         DateTime?
-  cancelledAt         DateTime?
+  confirmedAt         DateTime? @db.Timestamptz(3)
+  preparingAt         DateTime? @db.Timestamptz(3)
+  readyAt             DateTime? @db.Timestamptz(3)
+  servedAt            DateTime? @db.Timestamptz(3)
+  completedAt         DateTime? @db.Timestamptz(3)
+  cancelledAt         DateTime? @db.Timestamptz(3)
 
   /// Client-supplied key; retries reuse the same order instead of creating a second one.
   idempotencyKey      String?  @unique
   /// Short code shown to the guest for status lookups without an account.
   publicToken         String   @unique
   isDemo              Boolean  @default(false)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
 
   items       OrderItem[]
   statusEvents OrderStatusEvent[]
@@ -475,7 +500,7 @@ model OrderItem {
   /// Chosen options with their price deltas at purchase time.
   optionsSnapshot Json     @default("[]")
   instructions    String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
   billLines BillItem[]
 
@@ -493,7 +518,7 @@ model OrderStatusEvent {
   actorUserId String?
   actor     User?       @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
   note      String?
-  createdAt DateTime    @default(now())
+  createdAt DateTime    @default(now()) @db.Timestamptz(3)
 
   @@index([orderId, createdAt])
   @@map("order_status_events")
@@ -510,7 +535,7 @@ model Reservation {
   email           String?
   partySize       Int
   /// Instant in UTC; rendered in the restaurant timezone.
-  startsAt        DateTime
+  startsAt        DateTime @db.Timestamptz(3)
   durationMinutes Int
   status          ReservationStatus  @default(PENDING)
   specialRequests String?
@@ -519,15 +544,15 @@ model Reservation {
   customer        User?              @relation("ReservationCustomer", fields: [customerId], references: [id], onDelete: SetNull)
   createdVia      String             @default("WEB")
   sessions        TableSession[]
-  confirmedAt     DateTime?
-  checkedInAt     DateTime?
-  completedAt     DateTime?
-  cancelledAt     DateTime?
+  confirmedAt     DateTime? @db.Timestamptz(3)
+  checkedInAt     DateTime? @db.Timestamptz(3)
+  completedAt     DateTime? @db.Timestamptz(3)
+  cancelledAt     DateTime? @db.Timestamptz(3)
   cancelReason    String?
-  noShowAt        DateTime?
+  noShowAt        DateTime? @db.Timestamptz(3)
   isDemo          Boolean            @default(false)
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  createdAt       DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime           @updatedAt @db.Timestamptz(3)
 
   tables ReservationTableAssignment[]
 
@@ -544,7 +569,7 @@ model ReservationTableAssignment {
   tableId       String
   table         RestaurantTable @relation(fields: [tableId], references: [id], onDelete: Restrict)
   seatsUsed     Int
-  createdAt     DateTime    @default(now())
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
 
   @@unique([reservationId, tableId])
   @@index([tableId])
@@ -573,15 +598,15 @@ model Bill {
 
   /// Serialized totals + configuration at finalize time; audit evidence.
   snapshot Json?
-  finalizedAt DateTime?
-  settledAt   DateTime?
-  voidedAt    DateTime?
+  finalizedAt DateTime? @db.Timestamptz(3)
+  settledAt   DateTime? @db.Timestamptz(3)
+  voidedAt    DateTime? @db.Timestamptz(3)
   voidReason  String?
   createdByUserId String?
   createdBy   User?   @relation("BillCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   isDemo      Boolean @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
 
   items    BillItem[]
   orders   BillOrder[]
@@ -606,7 +631,7 @@ model BillItem {
   unitPricePoisa Int
   quantity       Int
   lineTotalPoisa Int
-  createdAt      DateTime @default(now())
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([billId])
   @@map("bill_items")
@@ -645,10 +670,10 @@ model Payment {
   callbackFingerprint String? @unique
   takenByUserId String?
   takenBy       User?               @relation("PaymentTakenBy", fields: [takenByUserId], references: [id], onDelete: SetNull)
-  verifiedAt    DateTime?
+  verifiedAt    DateTime? @db.Timestamptz(3)
   isDemo        Boolean             @default(false)
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
+  createdAt     DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime            @updatedAt @db.Timestamptz(3)
 
   events  PaymentEvent[]
   refunds Refund[]
@@ -668,7 +693,7 @@ model PaymentEvent {
   eventKey   String   @unique
   kind       String
   payload    Json
-  createdAt  DateTime @default(now())
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([paymentId, createdAt])
   @@map("payment_events")
@@ -689,8 +714,8 @@ model Refund {
   processedBy     User?        @relation("RefundProcessedBy", fields: [processedByUserId], references: [id], onDelete: SetNull)
   gatewayRefundId String?
   isDemo          Boolean      @default(false)
-  createdAt       DateTime     @default(now())
-  processedAt     DateTime?
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  processedAt     DateTime? @db.Timestamptz(3)
 
   @@index([status, createdAt])
   @@map("refunds")
@@ -709,9 +734,9 @@ model Notification {
   lastError     String?
   relatedKind   String?
   relatedId     String?
-  sentAt        DateTime?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
+  sentAt        DateTime? @db.Timestamptz(3)
+  createdAt     DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime            @updatedAt @db.Timestamptz(3)
 
   @@index([status, createdAt])
   @@index([relatedKind, relatedId])
@@ -724,11 +749,14 @@ model ChatConversation {
   /// Table token the visitor arrived with, if any. Scopes menu/price answers.
   tableToken  String?
   locale      String   @default("en")
-  startedAt   DateTime @default(now())
-  lastActiveAt DateTime @default(now())
+  startedAt   DateTime @default(now()) @db.Timestamptz(3)
+  lastActiveAt DateTime @default(now()) @db.Timestamptz(3)
   messageCount Int      @default(0)
   /// True while no AI provider responded (FAQ/grounded fallback).
   fallbackOnly Boolean  @default(false)
+  /// A visitor asked for a human; staff see these at the top of the inbox.
+  escalatedAt  DateTime? @db.Timestamptz(3)
+  escalationReason String?
 
   messages ChatMessage[]
 
@@ -745,7 +773,7 @@ model ChatMessage {
   /// Database records the answer was grounded in.
   sourcesJson    Json?
   usedFallback   Boolean  @default(false)
-  createdAt      DateTime @default(now())
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([conversationId, createdAt])
   @@map("chat_messages")
@@ -764,7 +792,7 @@ model AuditLog {
   afterJson   Json?
   metaJson    Json?
   ipHash      String?
-  createdAt   DateTime        @default(now())
+  createdAt   DateTime        @default(now()) @db.Timestamptz(3)
 
   @@index([entityType, entityId])
   @@index([actorUserId, createdAt])
@@ -778,7 +806,7 @@ model DocumentCounter {
   scope String  @id
   year  Int
   value Int     @default(0)
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   @@map("document_counters")
 }

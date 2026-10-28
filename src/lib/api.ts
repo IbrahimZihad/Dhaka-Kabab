@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextResponse, connection } from "next/server";
 import type { ZodTypeAny, z } from "zod";
 import { AppError, isAppError, toPublicError } from "@/lib/errors";
+import { env } from "@/lib/env";
 
 /**
  * One response envelope for every route handler:
@@ -35,11 +36,33 @@ export function fail(error: unknown) {
 }
 
 /** Wraps a handler so thrown AppErrors become structured responses. */
+export type RouteOptions = {
+  /**
+   * The session cookie is `SameSite=Lax` and every mutation reads a JSON body, so a
+   * cross-site form post already arrives unauthenticated. This flag skips the
+   * belt-and-braces origin check for the one kind of write that legitimately comes
+   * from another site — an external gateway posting a customer back to us.
+   */
+  allowForeignOrigin?: boolean;
+};
+
 export function route<Args extends unknown[]>(
   handler: (...args: Args) => Promise<Response>,
+  options: RouteOptions = {},
 ): (...args: Args) => Promise<Response> {
   return async (...args: Args) => {
+    // Cache Components bails a prerender out of by *throwing* when a handler reads request-time
+    // data, and every JSON endpoint here is request-time: session cookie, Origin header, caller
+    // IP, row writes. So this says so up front — and it sits deliberately *outside* the `try`
+    // below, because a `catch` that swallows the bail-out turns Next's own signal into a 500 and
+    // prints a stack per route during `next build`.
+    await connection();
     try {
+      const first = args[0];
+      if (!options.allowForeignOrigin && first instanceof Request) {
+        const method = first.method.toUpperCase();
+        if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") assertSameOrigin(first);
+      }
       return await handler(...args);
     } catch (error) {
       return fail(error);
@@ -82,16 +105,54 @@ export function parseQuery<T extends ZodTypeAny>(searchParams: URLSearchParams, 
 
 /**
  * Same-origin check for state-changing requests. Session cookies are SameSite
- *=Lax, which already blocks cross-site POSTs; this makes the requirement
+ * =Lax, which already blocks cross-site POSTs; this makes the requirement
  * explicit and covers non-browser clients with an Origin header.
+ *
+ * The comparison is deliberately not `Origin === new URL(request.url).origin`:
+ * that value is the server's own view of the request, which in `next dev` is
+ * always `localhost` whatever the browser used, and behind a reverse proxy is the
+ * internal host. Both would reject a legitimate customer whose Origin is the real
+ * public origin, so the allowed set is the request URL, the configured
+ * `NEXT_PUBLIC_APP_URL`, and the localhost/127.0.0.1 aliases of each.
  */
+export function allowedOrigins(request: Request): string[] {
+  const candidates = [safeOrigin(request.url), env.appUrl];
+  const allowed: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (!allowed.includes(candidate)) allowed.push(candidate);
+    const localAlias = aliasOfLocalOrigin(candidate);
+    if (localAlias && !allowed.includes(localAlias)) allowed.push(localAlias);
+  }
+  return allowed;
+}
+
+function safeOrigin(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+/** `http://localhost:3000` ⇄ `http://127.0.0.1:3000`; anything else has no alias. */
+function aliasOfLocalOrigin(origin: string): string | null {
+  try {
+    const parsed = new URL(origin);
+    if (parsed.hostname === "localhost") return new URL(origin.replace("localhost", "127.0.0.1")).origin;
+    if (parsed.hostname === "127.0.0.1") return new URL(origin.replace("127.0.0.1", "localhost")).origin;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function assertSameOrigin(request: Request): void {
   const origin = request.headers.get("origin");
   if (!origin) return;
-  const expected = new URL(request.url).origin;
-  if (origin !== expected) {
-    throw new AppError("FORBIDDEN", "Cross-origin request rejected.");
-  }
+  const normalised = origin.replace(/\/+$/, "");
+  if (allowedOrigins(request).includes(normalised)) return;
+  throw new AppError("FORBIDDEN", "Cross-origin request rejected.");
 }
 
 export function clientIp(request: Request): string {

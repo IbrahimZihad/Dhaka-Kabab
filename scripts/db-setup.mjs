@@ -81,16 +81,19 @@ async function main() {
   writeEnvFile();
 
   // Apply migrations and generate the client through the project's own CLI.
-  const run = (args) => {
+  const run = (args, env = process.env) => {
     const result = spawnSync(process.execPath, ["node_modules/prisma/build/index.js", ...args], {
       cwd: ROOT,
       stdio: "inherit",
-      env: process.env,
+      env,
     });
     if (result.status !== 0) process.exit(result.status ?? 1);
   };
   run(["generate"]);
   run(["migrate", "deploy"]);
+  // The test database has to sit at the same head as development, otherwise an
+  // integration run queries columns the application has already moved on from.
+  run(["migrate", "deploy"], { ...process.env, DATABASE_URL: process.env.TEST_DATABASE_URL });
   console.log("Databases ready.");
 }
 
