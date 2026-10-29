@@ -156,6 +156,13 @@ body {
   margin-bottom: 0.3rem;
 }
 
+/* Table headers reuse the label typography but must stay cells: a block header
+   stacks the columns vertically and stops matching its own data. */
+th.label {
+  display: table-cell;
+  margin-bottom: 0;
+}
+
 .input,
 .select,
 .textarea {

@@ -79,6 +79,14 @@ export function OrderCard({ order, showTimeline = true }: { order: PlacedOrder; 
           Ready at {formatTimeInZone(new Date(order.readyAt), order.timeZone)} — please collect it from the counter.
         </p>
       ) : null}
+
+      {order.paymentStatus !== "PAID" && order.type !== "DINE_IN" && order.status !== "CANCELLED" ? (
+        <p className="notice mt-3">
+          {order.type === "DELIVERY"
+            ? `Please have ${order.totals.total} ready to pay on delivery.`
+            : `Please pay ${order.totals.total} at the counter when you collect — staff will give you a receipt.`}
+        </p>
+      ) : null}
     </article>
   );
 }

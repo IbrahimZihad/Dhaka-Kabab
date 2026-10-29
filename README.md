@@ -13,7 +13,7 @@ What is real and what is not, stated up front:
 | Area | State |
 | --- | --- |
 | Menu, orders, tables, bills, payments, reservations, audit, reports | Real, database-backed, server-validated |
-| Payment gateway | SSLCommerz is implemented; **without `SSLCOMMERZ_STORE_ID` / `SSLCOMMERZ_API_KEY` the app uses a clearly-labelled `simulated` sandbox** and marks every such transaction in the UI, in `payments` and on receipts |
+| Payment gateway | SSLCommerz is implemented; with no gateway chosen (`paymentProvider = none`, the default) the site takes no online payment and every bill says "pay at the counter"; `simulated` is a developer's explicit choice and every transaction on it is labelled in the UI, in `payments` and on receipts |
 | Email | Real SMTP when `SMTP_HOST` is set; otherwise notifications are stored `QUEUED`/`SKIPPED` and the UI never claims delivery |
 | AI assistant | Any OpenAI-compatible endpoint when `AI_API_KEY` + `AI_MODEL` are set; otherwise a grounded FAQ fallback that is labelled as such |
 | Seed data | Demo content, flagged `isDemo` wherever the schema carries the column; the seed refuses a production database |
@@ -163,8 +163,13 @@ Conventions that the codebase enforces:
   kitchen states.
 - Guests can request the bill from the table (`/api/sessions/request-bill`); the floor shows the
   marker and the cashier settles it.
+- Settling does not require the floor board. From an order, **Bill & take payment** raises its bill —
+  the visit's bill for a table order, a bill of its own for a takeaway or delivery — and opens the
+  till screen, where the amount is fixed, the money taken, the receipt printed and (for a table) the
+  table cleared, all on one page.
 - Takeaway and delivery orders capture a name, a Bangladeshi mobile number and (for delivery) an
-  address; a guest can track an order through `/track/[token]` without an account.
+  address; a guest can track an order through `/track/[token]` without an account, and is told there
+  to pay at the counter.
 
 ## 6. Billing
 

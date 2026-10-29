@@ -20,6 +20,7 @@ import { BillPaymentForm } from "@/components/admin/bill-payment-form";
 import { BillGatewayPaymentForm } from "@/components/admin/bill-gateway-payment-form";
 import { BillRefundForm } from "@/components/admin/bill-refund-form";
 import { BillReceipt } from "@/components/admin/bill-receipt";
+import { ClearTableButton } from "@/components/admin/clear-table-button";
 import { PaymentStatusCheck } from "@/components/admin/payment-status-check";
 
 async function BillDetail({ params }: { params: Promise<{ id: string }> }) {
@@ -40,6 +41,7 @@ async function BillDetail({ params }: { params: Promise<{ id: string }> }) {
   const canRefund = roleHasPermission(user.role, "payment:refund");
   const canManage = roleHasPermission(user.role, "bill:manage");
   const canVoid = roleHasPermission(user.role, "bill:void");
+  const canClear = roleHasPermission(user.role, "table:session:manage");
   const canSeePayments = roleHasPermission(user.role, "payment:view");
 
   const settings = await getSettings();
@@ -82,6 +84,11 @@ async function BillDetail({ params }: { params: Promise<{ id: string }> }) {
   const pendingPayments = paymentRows.filter((payment) => payment.status === "PENDING");
   const demoMoneyHeld = paymentRows.some((payment) => payment.isDemo);
   const localised = (value: Date | null) => (value ? formatInZone(value, timeZone, { year: undefined }) : null);
+  // A standalone bill's header already names its order; listing it again as "1 order(s)" reads like a second order.
+  const orderNumbers = bill.orders.map((link) => link.order.orderNumber);
+  const extraOrderNumbers = bill.order
+    ? orderNumbers.filter((number) => number !== bill.order?.orderNumber)
+    : orderNumbers;
 
   const refundable = verifiedPayments
     .map((payment) => {
@@ -116,8 +123,8 @@ async function BillDetail({ params }: { params: Promise<{ id: string }> }) {
               : bill.order
                 ? `Bill raised against order ${bill.order.orderNumber}`
                 : "Not attached to a table"}
-            {bill.orders.length > 0
-              ? ` · ${bill.orders.length} order(s): ${bill.orders.map((link) => link.order.orderNumber).join(", ")}`
+            {extraOrderNumbers.length > 0
+              ? ` · ${extraOrderNumbers.length} order(s): ${extraOrderNumbers.join(", ")}`
               : ""}
           </p>
         </div>
@@ -139,6 +146,130 @@ async function BillDetail({ params }: { params: Promise<{ id: string }> }) {
           Finalized on {localised(bill.finalizedAt) ?? orUnset(null)} at {formatPoisa(bill.totalPoisa, { symbol })}. A
           finalized bill is an issued document: its lines cannot be edited, only paid, refunded or voided.
         </Note>
+      ) : null}
+
+      {/*
+        Everything the till does, in the order it is done. The panels further down
+        are the record — lines, ledger, refunds — not the workflow, so a person
+        taking money never has to scroll past them to find the next button. A voided
+        bill has no workflow left: it is a record from the moment it was voided.
+      */}
+      {bill.status !== "VOIDED" ? (
+      <Panel
+        title="Settle this bill"
+        description="Fix the amount, take the money, hand over the receipt — all on this screen."
+      >
+        <div className="rounded-lg border border-line bg-paper-raised p-4">
+          <p className="label">Outstanding</p>
+          <p className={outstandingPoisa > 0 ? "price text-3xl" : "text-3xl font-bold"}>
+            {outstandingPoisa > 0 ? formatPoisa(outstandingPoisa, { symbol }) : "Nothing outstanding"}
+          </p>
+          <p className="hint mt-1">
+            Total {formatPoisa(bill.totalPoisa, { symbol })} · received {formatPoisa(bill.paidPoisa, { symbol })}
+            {bill.refundedPoisa > 0 ? ` · refunded ${formatPoisa(bill.refundedPoisa, { symbol })}` : ""} ·{" "}
+            {BILL_STATUS_LABELS[bill.status].toLowerCase()}
+          </p>
+        </div>
+
+        <ol className="mt-4 space-y-4">
+          <SettleStep step={1} title="Fix the amount" state={bill.status === "OPEN" ? "next" : "done"}>
+            <BillActions
+              billId={bill.id}
+              billNumber={bill.number}
+              status={bill.status}
+              canManage={canManage}
+              currencySymbol={symbol}
+            />
+          </SettleStep>
+
+          <SettleStep
+            step={2}
+            title="Take the payment"
+            state={bill.status === "SETTLED" ? "done" : bill.status === "OPEN" ? "waiting" : "next"}
+          >
+            {bill.status === "SETTLED" ? (
+              <p className="hint">
+                Settled — {formatPoisa(bill.paidPoisa, { symbol })} received against{" "}
+                {formatPoisa(bill.totalPoisa, { symbol })}. Nothing more can be taken; if the guest handed over more than
+                the total, refund the difference below.
+              </p>
+            ) : (
+              <div className="grid gap-5 lg:grid-cols-2">
+                <div>
+                  <p className="label">Cash, card or mobile banking at the counter</p>
+                  {!canRecord ? (
+                    <p className="hint mt-1">
+                      Recording a payment needs the cashier role or above. Your role can read, not receive.
+                    </p>
+                  ) : outstandingPoisa === 0 ? (
+                    <p className="hint mt-1">
+                      Nothing is outstanding on this bill, so there is nothing to take. If the guest handed over more
+                      than the total, refund the difference instead.
+                    </p>
+                  ) : (
+                    <div className="mt-2">
+                      <BillPaymentForm
+                        billId={bill.id}
+                        outstandingInputValue={poisaToInputValue(outstandingPoisa)}
+                        outstandingLabel={formatPoisa(outstandingPoisa, { symbol })}
+                        currencySymbol={symbol}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <p className="label">Online at the counter</p>
+                  {!canRecord ? (
+                    <p className="hint mt-1">Only a role that may record payments can start a bank hand-off.</p>
+                  ) : bill.status === "OPEN" ? (
+                    <p className="hint mt-1">
+                      Finalize the bill first: an open bill can still grow, so money must not be sent to the bank against
+                      it.
+                    </p>
+                  ) : outstandingPoisa === 0 ? (
+                    <p className="hint mt-1">Nothing is outstanding, so there is nothing to send to the bank.</p>
+                  ) : (
+                    <div className="mt-2">
+                      <BillGatewayPaymentForm
+                        billId={bill.id}
+                        outstandingLabel={formatPoisa(outstandingPoisa, { symbol })}
+                        currencySymbol={symbol}
+                        timeZone={timeZone}
+                        gatewayReady={gateway?.available ?? false}
+                        gatewayMessage={
+                          gateway && !gateway.available
+                            ? gateway.missing.length > 0
+                              ? `Online payment is unavailable. Still needed: ${gateway.missing.join(", ")}. Take the money at the counter instead.`
+                              : `Online payment is unavailable (${gateway.label}). Take the money at the counter instead.`
+                            : "Online payment is not configured."
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </SettleStep>
+
+          <SettleStep step={3} title="Hand over the receipt" state={bill.status === "OPEN" ? "waiting" : "next"}>
+            {bill.status === "OPEN" ? (
+              <p className="hint">The receipt is issued from the finalized figures, so it opens up once the bill is fixed above.</p>
+            ) : (
+              <BillReceipt billId={bill.id} timeZone={timeZone} autoLoad />
+            )}
+          </SettleStep>
+        </ol>
+
+        {bill.status === "SETTLED" && bill.session && canClear ? (
+          <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">
+            <ClearTableButton sessionId={bill.session.id} tableLabel={bill.session.table.label} />
+            <span className="hint">
+              Money is settled. Clearing the table ends the visit — any order still open is marked completed, and the
+              bill stays on the ledger.
+            </span>
+          </div>
+        ) : null}
+      </Panel>
       ) : null}
 
       <Panel title="Money" description="Everything below is the bill's own stored figures, in the restaurant's currency.">
@@ -325,57 +456,6 @@ async function BillDetail({ params }: { params: Promise<{ id: string }> }) {
         )}
       </Panel>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Panel title="Take money at the counter" description="Cash, card or mobile banking handed over here.">
-          {!canRecord ? (
-            <p className="hint">Recording a payment needs the cashier role or above. Your role can read, not receive.</p>
-          ) : bill.status === "VOIDED" ? (
-            <p className="hint">A voided bill cannot accept payments.</p>
-          ) : outstandingPoisa === 0 ? (
-            <p className="hint">
-              Nothing is outstanding on this bill, so there is nothing to take. If the guest handed over more than the
-              total, refund the difference instead.
-            </p>
-          ) : (
-            <BillPaymentForm
-              billId={bill.id}
-              outstandingInputValue={poisaToInputValue(outstandingPoisa)}
-              outstandingLabel={formatPoisa(outstandingPoisa, { symbol })}
-              currencySymbol={symbol}
-            />
-          )}
-        </Panel>
-
-        <Panel title="Pay online from the counter" description="The guest pays the bank; this till only starts the hand-off.">
-          {!canRecord ? (
-            <p className="hint">Only a role that may record payments can start a bank hand-off.</p>
-          ) : bill.status !== "FINALIZED" ? (
-            <p className="hint">
-              {bill.status === "OPEN"
-                ? "This bill is still open, so the total can grow underneath the guest. Finalize it before sending money to the bank."
-                : "This bill needs no online hand-off."}
-            </p>
-          ) : outstandingPoisa === 0 ? (
-            <p className="hint">Nothing is outstanding, so there is nothing to send to the bank.</p>
-          ) : (
-            <BillGatewayPaymentForm
-              billId={bill.id}
-              outstandingLabel={formatPoisa(outstandingPoisa, { symbol })}
-              currencySymbol={symbol}
-              timeZone={timeZone}
-              gatewayReady={gateway?.available ?? false}
-              gatewayMessage={
-                gateway && !gateway.available
-                  ? gateway.missing.length > 0
-                    ? `Online payment is unavailable. Still needed: ${gateway.missing.join(", ")}.`
-                    : `Online payment is unavailable (${gateway.label}).`
-                  : "Online payment is not configured."
-              }
-            />
-          )}
-        </Panel>
-      </div>
-
       <Panel
         title="Refund money already received"
         description="A refund gives back part of a verified payment. It is recorded against that payment and never removes it."
@@ -389,29 +469,16 @@ async function BillDetail({ params }: { params: Promise<{ id: string }> }) {
         )}
       </Panel>
 
-      <Panel title="This bill" description="Refresh while it is open, then finalize it once the table has finished.">
-        <div className="space-y-4">
-          <BillActions
+      {canVoid ? (
+        <Panel title="Void this bill" description="A correction of last resort — the lines and the reason stay on the ledger.">
+          <BillVoidForm
             billId={bill.id}
             billNumber={bill.number}
             status={bill.status}
-            canManage={canManage}
-            currencySymbol={symbol}
+            paymentsHeld={verifiedPayments.length > 0}
           />
-          {canVoid ? (
-            <BillVoidForm
-              billId={bill.id}
-              billNumber={bill.number}
-              status={bill.status}
-              paymentsHeld={verifiedPayments.length > 0}
-            />
-          ) : null}
-        </div>
-      </Panel>
-
-      <Panel title="Receipt" description="The figures the restaurant holds for this bill, straight from the receipt route.">
-        <BillReceipt billId={bill.id} timeZone={timeZone} />
-      </Panel>
+        </Panel>
+      ) : null}
 
       {bill.orders.length > 0 ? (
         <p className="hint">
@@ -435,6 +502,42 @@ function Money({ label, value, strong = false }: { label: string; value: string;
       <dt className="label">{label}</dt>
       <dd className={strong ? "price text-lg" : "soft"}>{value}</dd>
     </div>
+  );
+}
+
+const STEP_BADGE: Record<"done" | "next" | "waiting", string> = {
+  done: "badge badge-open",
+  next: "badge badge-brand",
+  waiting: "badge",
+};
+
+/**
+ * One step of the till workflow. The badge says where the bill stands, so a person
+ * who has not touched this screen before can see the next button without reading the
+ * prose. The step still renders its own controls when it is waiting — it explains why
+ * it cannot be used yet, rather than hiding the reason.
+ */
+function SettleStep({
+  step,
+  title,
+  state,
+  children,
+}: {
+  step: number;
+  title: string;
+  state: "done" | "next" | "waiting";
+  children: React.ReactNode;
+}) {
+  return (
+    <li className={state === "waiting" ? "rounded-lg border border-line bg-paper p-4 opacity-80" : "rounded-lg border border-line bg-paper p-4"}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={STEP_BADGE[state]}>{state === "done" ? "Done" : state === "next" ? "Next" : "Waiting"}</span>
+        <h3 className="font-semibold">
+          {step}. {title}
+        </h3>
+      </div>
+      <div className="mt-3">{children}</div>
+    </li>
   );
 }
 

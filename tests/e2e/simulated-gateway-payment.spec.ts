@@ -17,13 +17,13 @@ import { closeSession, floorTile, pickFreeTable, seatAtTable, sendCartToKitchen 
  * then may the guest pay online, and the gateway's own
  * verified notification (not the redirect) is what settles the money.
  *
- * FINDING, reported rather than papered over: a TAKEAWAY order has no way to reach a
- * gateway at all. Bills are only ever created for a table session
- * (`getOrCreateOpenBill(sessionId)` is the single `bill.create` in the service), the
- * guest's online payment needs a finalized bill for *its* session, and the counter's
- * "Pay online" panel only exists on a bill screen. So the takeaway checkout that this
- * suite also covers can only ever be paid in person; the order page's own hint sends
- * staff to "bills and payments", where no such bill can be raised.
+ * While the bill is still OPEN the guest is pointed at the counter instead of being
+ * offered a payment screen the server would refuse: an open bill can still grow.
+ *
+ * A takeaway can now be billed too — the order screen's "Bill & take payment"
+ * raises one — but it has no guest session page to send a pay link to, so its
+ * online hand-off is started by staff from the bill screen; the guest settles at
+ * the counter.
  */
 test.describe.serial("simulated gateway, from a table bill to a settled payment", () => {
   const tag = runTag();
@@ -72,19 +72,12 @@ test.describe.serial("simulated gateway, from a table bill to a settled payment"
     await expect(ownerPage.getByText("Open", { exact: true }).first())
       .toBeVisible({ timeout: 60_000 });
 
-    // ------------------------------------------------- an open bill cannot be paid
+    // -------------------------------------- an open bill points the guest at the till
     const billCard = table.locator("div.card").filter({ hasText: "The bill" });
     await expect(billCard.getByText("Outstanding", { exact: true })).toBeVisible({ timeout: REFRESH_TIMEOUT });
     const payButton = table.getByRole("button", { name: /^Pay .* online$/ });
-    await expect(payButton, "the guest should be offered the outstanding amount").toBeVisible();
-    await payButton.click();
-    await table.getByPlaceholder("Your name").fill(`E2e Payer ${tag}`);
-    await table.getByPlaceholder("Mobile number").fill(testMobile(tag));
-    await table.getByPlaceholder("Email for the receipt").fill(`e2e.${tag}@example.test`);
-    await table.getByRole("button", { name: "Continue to the bank" }).click();
-
-    await expect(table.getByText("not finalized yet", { exact: false })).toBeVisible({ timeout: 60_000 });
-    await expect(table, "a refusal must not hand the guest to a payment page").toHaveURL(/\/order/);
+    await expect(payButton, "an open bill can still grow, so no online door is offered").toHaveCount(0);
+    await expect(billCard.getByText(/record the payment against this table/)).toBeVisible();
 
     // --------------------------------------------------------- staff finalize it
     await ownerPage.reload();
@@ -92,11 +85,7 @@ test.describe.serial("simulated gateway, from a table bill to a settled payment"
     await expect(ownerPage.getByText("This bill is finalized", { exact: false })).toBeVisible({ timeout: 60_000 });
 
     // ------------------------------------------------------------ the hand-off
-    // The guest is left sitting in the open panel with the refusal still on screen.
-    // The card polls, so finalising the bill must retract that sentence — it now
-    // contradicts the status line above it — and the same door must open again.
-    await expect(table.getByText("not finalized yet", { exact: false })).toHaveCount(0, { timeout: REFRESH_TIMEOUT });
-    await table.getByRole("button", { name: "Not now" }).click();
+    // The card polls, so the online door opens on its own once the figures are fixed.
     await expect(payButton, "a finalized bill may be paid online from the table").toBeVisible({
       timeout: REFRESH_TIMEOUT,
     });

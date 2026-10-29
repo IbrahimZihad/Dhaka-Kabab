@@ -108,9 +108,20 @@ export function guestOrder(
 export function guestBill(
   bill: { number: string; status: string; totalPoisa: number; paidPoisa: number; discountPoisa: number } | undefined,
   symbol: string,
+  /**
+   * Whether this installation can take online money at all. A guest is only shown
+   * an online button when there is a gateway behind it: a button that exists to be
+   * refused is worse than being told, before they tap, to pay at the counter.
+   */
+  onlinePaymentsOpen: boolean,
 ) {
   if (!bill) return null;
   const outstanding = Math.max(0, bill.totalPoisa - bill.paidPoisa);
+  /**
+   * A guest may settle a finalized bill from their own phone; an open bill can
+   * still grow, so charging it would take money against a total nobody agreed.
+   */
+  const payableOnline = onlinePaymentsOpen && bill.status === "FINALIZED" && outstanding > 0;
   return {
     number: bill.number,
     status: bill.status,
@@ -118,10 +129,6 @@ export function guestBill(
     paid: formatPoisa(bill.paidPoisa, { symbol }),
     outstanding: formatPoisa(outstanding, { symbol }),
     outstandingPoisa: outstanding,
-    /**
-     * A guest may settle a finalized bill from their own phone; an open bill can
-     * still grow, so charging it would take money against a total nobody agreed.
-     */
-    payableOnline: bill.status === "FINALIZED" && outstanding > 0,
+    payableOnline,
   };
 }

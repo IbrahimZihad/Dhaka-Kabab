@@ -15,6 +15,7 @@ import {
   runTag,
   track,
   uniqueKey,
+  uniquePhone,
 } from "./support";
 import { cancelOrder, createOrder } from "@/server/services/order.service";
 import { closeSession } from "@/server/services/table.service";
@@ -24,6 +25,7 @@ import {
   finalizeBill,
   getBillById,
   getOrCreateOpenBill,
+  openBillForOrder,
   openBillForSession,
   refreshBillLines,
   requestBillForSession,
@@ -441,5 +443,74 @@ describe("receipts", () => {
 
   it("refuses to build a receipt for a bill that does not exist", async () => {
     await expectRefusal(() => buildReceipt("ckf-no-such-bill"), "NOT_FOUND", "receipt for nothing");
+  });
+});
+
+/**
+ * The owner's route from an order to the money. A table settles once, so a table
+ * order reaches the visit's bill; a takeaway has no visit, so it gets a bill of its
+ * own — otherwise a served takeaway had no receipt and no way to record the cash.
+ */
+describe("raising a bill from an order", () => {
+  it("gives a takeaway a bill of its own and hands the same one back next time", async () => {
+    const { order } = await createOrder(
+      {
+        type: "TAKEAWAY",
+        contact: { name: `Guest ${runTag}`, phone: uniquePhone() },
+        items: [{ menuItemId: kebab.id, quantity: 2, options: [], instructions: null }],
+        idempotencyKey: uniqueKey("bill-order"),
+      },
+      { customerId: null },
+    );
+    track("orders", order.id);
+
+    const first = await openBillForOrder(order.id, actor);
+    track("bills", first.bill.id);
+
+    expect(first.bill.orderId).toBe(order.id);
+    expect(first.bill.sessionId).toBeNull();
+    expect(first.bill.status).toBe("OPEN");
+    // The bill is priced from the order the guest was quoted, not re-priced.
+    expect(first.bill.totalPoisa).toBe(order.totalPoisa);
+    expect(await prisma.billItem.count({ where: { billId: first.bill.id } })).toBe(1);
+
+    const again = await openBillForOrder(order.id, actor);
+    expect(again.bill.id).toBe(first.bill.id);
+    expect(await prisma.bill.count({ where: { orderId: order.id } })).toBe(1);
+  });
+
+  it("puts a table order on the visit's bill instead of raising a second one", async () => {
+    const visit = await newVisit("Order bill");
+    const order = await orderAt(visit, [{ menuItemId: kebab.id, quantity: 2 }]);
+
+    const { bill } = await openBillForOrder(order.id, actor);
+    track("bills", bill.id);
+
+    expect(bill.sessionId).toBe(visit.sessionId);
+    expect(bill.orderId).toBeNull();
+    expect(await prisma.bill.count({ where: { sessionId: visit.sessionId } })).toBe(1);
+    const lines = await prisma.billItem.findMany({ where: { billId: bill.id } });
+    expect(lines.map((line) => line.orderNumber)).toEqual([order.orderNumber]);
+  });
+
+  it("refuses a cancelled order, because there is nothing left to bill", async () => {
+    const visit = await newVisit("Cancel bill");
+    const order = await orderAt(visit, [{ menuItemId: kebab.id, quantity: 1 }]);
+    await cancelOrder(order.id, "Guest left", { userId: actor.userId, role: "CASHIER" });
+
+    await expectRefusal(() => openBillForOrder(order.id, actor), "CONFLICT", "bill a cancelled order");
+  });
+
+  it("leaves a finalized bill exactly as issued when the button is pressed again", async () => {
+    const visit = await newVisit("Finalized bill");
+    const order = await orderAt(visit, [{ menuItemId: kebab.id, quantity: 2 }]);
+    const opened = await openBillForOrder(order.id, actor);
+    track("bills", opened.bill.id);
+    const finalized = await finalizeBill(opened.bill.id, {}, manager);
+
+    const again = await openBillForOrder(order.id, actor);
+    expect(again.bill.id).toBe(finalized.id);
+    expect(again.bill.status).toBe("FINALIZED");
+    expect(again.bill.totalPoisa).toBe(finalized.totalPoisa);
   });
 });

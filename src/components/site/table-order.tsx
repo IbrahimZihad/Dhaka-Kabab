@@ -370,12 +370,18 @@ export function TableOrder({ symbol }: { symbol: string }) {
             {view?.session.billRequestedAt ? "Bill requested" : "Ask for the bill"}
           </button>
           {view?.bill && view.bill.outstandingPoisa > 0 ? (
-            <GuestPayLink
-              participantToken={seat.participantToken}
-              outstandingPoisa={view.bill.outstandingPoisa}
-              symbol={symbol}
-              payableOnline={view.bill.payableOnline}
-            />
+            view.bill.payableOnline ? (
+              <GuestPayLink
+                participantToken={seat.participantToken}
+                outstandingPoisa={view.bill.outstandingPoisa}
+                symbol={symbol}
+              />
+            ) : (
+              <p className="notice">
+                Pay {view.bill.outstanding} at the counter — staff there record the payment against this table
+                {view.bill.status === "OPEN" ? " once the bill is fixed." : "."}
+              </p>
+            )
           ) : null}
         </div>
         {openOrders.length > 0 ? (
@@ -398,12 +404,10 @@ function GuestPayLink({
   participantToken,
   outstandingPoisa,
   symbol,
-  payableOnline,
 }: {
   participantToken: string;
   outstandingPoisa: number;
   symbol: string;
-  payableOnline: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -412,18 +416,6 @@ function GuestPayLink({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [handoff, setHandoff] = useState<Handoff | null>(null);
-
-  // A refusal is about the bill as it stood at that moment. The card above keeps
-  // polling, so when staff finalise the bill while the guest is still reading
-  // "not finalized yet", the sentence would contradict the status line beneath it.
-  // Reset during render on the flip only — the React pattern for a prop the state
-  // was derived from — so a refusal raised *after* the bill became payable, too
-  // many attempts say, stays on screen.
-  const [wasPayable, setWasPayable] = useState(payableOnline);
-  if (wasPayable !== payableOnline) {
-    setWasPayable(payableOnline);
-    setError(null);
-  }
 
   async function pay() {
     setBusy(true);

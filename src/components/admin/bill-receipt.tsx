@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/client-api";
 import { PAYMENT_METHOD_LABELS, PAYMENT_RECORD_LABELS } from "@/lib/staff-format";
 import { formatPoisa } from "@/lib/money";
@@ -83,22 +83,60 @@ type Receipt = {
  * not issued, signed or registered with the tax authority, and there is no PDF
  * behind this button.
  */
-export function BillReceipt({ billId, timeZone }: { billId: string; timeZone: string }) {
+export function BillReceipt({
+  billId,
+  timeZone,
+  autoLoad = false,
+}: {
+  billId: string;
+  timeZone: string;
+  /**
+   * The settle panel already knows the bill is fixed, so the receipt is fetched on
+   * arrival: the owner should not have to press "Receipt" before they can hand one
+   * over. Kept opt-in because the standalone receipt panel reads better as a choice.
+   */
+  autoLoad?: boolean;
+}) {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  const fetchReceipt = useCallback(
+    () => apiFetch<Receipt>(`/api/bills/${billId}/receipt`, { method: "GET" }),
+    [billId],
+  );
+
+  const load = useCallback(async () => {
     setBusy(true);
     setError(null);
-    const response = await apiFetch<Receipt>(`/api/bills/${billId}/receipt`, { method: "GET" });
+    const response = await fetchReceipt();
     setBusy(false);
     if (!response.ok) {
       setError(response.error.message);
       return;
     }
     setReceipt(response.data);
-  }
+  }, [fetchReceipt]);
+
+  // The receipt is a snapshot of one bill's stored figures, so it is read once on
+  // arrival when the caller already knows the bill is fixed. There is no spinner
+  // state on this path: the read starts and settles itself, and the answer replaces
+  // the same placeholder the button would have shown.
+  useEffect(() => {
+    if (!autoLoad) return;
+    let live = true;
+    fetchReceipt().then((response) => {
+      if (!live) return;
+      if (!response.ok) {
+        setError(response.error.message);
+        return;
+      }
+      setReceipt(response.data);
+    });
+    return () => {
+      live = false;
+    };
+  }, [autoLoad, fetchReceipt]);
 
   if (error) return <p className="notice notice-error">{error}</p>;
 
@@ -184,9 +222,9 @@ export function BillReceipt({ billId, timeZone }: { billId: string; timeZone: st
           <thead>
             <tr className="border-b border-line">
               <th className="label py-1">Item</th>
-              <th className="label py-1 text-right">Qty</th>
-              <th className="label py-1 text-right">Price</th>
-              <th className="label py-1 text-right">Total</th>
+              <th className="label py-1 text-right whitespace-nowrap">Qty</th>
+              <th className="label py-1 text-right whitespace-nowrap">Price</th>
+              <th className="label py-1 text-right whitespace-nowrap">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -202,9 +240,13 @@ export function BillReceipt({ billId, timeZone }: { billId: string; timeZone: st
                     {note ? <p className="muted">{note}</p> : null}
                     {item.orderNumber ? <p className="muted">{item.orderNumber}</p> : null}
                   </td>
-                  <td className="py-1 text-right tabular-nums">{item.quantity}</td>
-                  <td className="py-1 text-right tabular-nums">{formatPoisa(item.unitPricePoisa, { symbol })}</td>
-                  <td className="py-1 text-right tabular-nums">{formatPoisa(item.lineTotalPoisa, { symbol })}</td>
+                  <td className="py-1 text-right tabular-nums whitespace-nowrap">{item.quantity}</td>
+                  <td className="py-1 text-right tabular-nums whitespace-nowrap">
+                    {formatPoisa(item.unitPricePoisa, { symbol })}
+                  </td>
+                  <td className="py-1 text-right tabular-nums whitespace-nowrap">
+                    {formatPoisa(item.lineTotalPoisa, { symbol })}
+                  </td>
                 </tr>
               );
             })}

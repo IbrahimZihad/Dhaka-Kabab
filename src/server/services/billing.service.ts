@@ -481,6 +481,60 @@ export async function openBillForSession(sessionId: string, actor: { userId: str
 }
 
 /**
+ * The owner's door from an order to the money: find the bill this order belongs
+ * to, or raise one for it.
+ *
+ * A table order reaches the visit's bill, because a table settles once rather
+ * than per plate and the kid at the end of the table must not be able to leave
+ * unbilled. A takeaway or delivery order has no visit at all, so it gets a bill of
+ * its own — without one, a served takeaway had no receipt and no way to record
+ * the cash the guest had already handed over.
+ */
+export async function openBillForOrder(orderId: string, actor: { userId: string; role: string; ip?: string }) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { id: true, orderNumber: true, sessionId: true, status: true },
+  });
+  if (!order) throw new AppError("NOT_FOUND", "Order not found.");
+  if (order.status === "CANCELLED") throw new AppError("CONFLICT", "This order was cancelled, so it has nothing to bill.");
+
+  const existing = await prisma.bill.findFirst({
+    where: { OR: [{ orderId: order.id }, { orders: { some: { orderId: order.id } } }] },
+    orderBy: { createdAt: "desc" },
+  });
+  if (existing) {
+    if (existing.status === "VOIDED") {
+      throw new AppError("CONFLICT", `Bill ${existing.number} was voided. Ask a manager to raise a replacement.`);
+    }
+    // Default refresh rules: an OPEN bill re-mirrors, a finalized one is left alone.
+    // Re-rolling an issued document is not something one more click from an order
+    // may do.
+    return { bill: await refreshBillLines(existing.id) };
+  }
+
+  const bill = order.sessionId
+    ? await getOrCreateOpenBill(order.sessionId)
+    : await prisma.bill.create({
+        data: {
+          number: await nextDocumentNumber("bill", { timeZone: (await getSettings()).timezone }),
+          orderId: order.id,
+          createdByUserId: actor.userId,
+        },
+      });
+
+  const refreshed = await refreshBillLines(bill.id, prisma, { preserveFinalized: false });
+  await writeAudit({
+    actorUserId: actor.userId,
+    action: "bill.open",
+    entityType: "Bill",
+    entityId: bill.id,
+    meta: { from: "order", orderNumber: order.orderNumber, sessionBilled: Boolean(order.sessionId), role: actor.role },
+    ip: actor.ip,
+  });
+  return { bill: refreshed };
+}
+
+/**
  * A guest at a table tapped "Ask for the bill". Nothing about the bill changes —
  * this only puts a request in front of the floor staff, and it is deliberately
  * not a payment action.

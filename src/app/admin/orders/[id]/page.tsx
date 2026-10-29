@@ -16,6 +16,7 @@ import { orUnset } from "@/server/http/site";
 import { Details, Note, Panel, StatusBadge } from "@/components/admin/admin-ui";
 import { OrderStatusControls } from "@/components/admin/order-status-controls";
 import { OrderCancelForm } from "@/components/admin/order-cancel-form";
+import { OrderSettleButton } from "@/components/admin/order-settle-button";
 
 export const metadata: Metadata = { title: "Order" };
 
@@ -119,6 +120,7 @@ async function OrderDetailBody({ params }: { params: Promise<{ id: string }> }) 
   }).map((to) => ({ status: to, label: ORDER_STATUS_LABELS[to] }));
 
   const mayCancel = roleHasPermission(user.role, "order:cancel") && isTransitionAllowed(orderStatus, "CANCELLED", user.role);
+  const maySettle = roleHasPermission(user.role, "bill:manage") && orderStatus !== "CANCELLED";
 
   const rows: { label: string; value: React.ReactNode }[] = [
     { label: "Type", value: typeLabel(view.type) },
@@ -139,7 +141,7 @@ async function OrderDetailBody({ params }: { params: Promise<{ id: string }> }) 
     rows.push({
       label: "Bill",
       value: bill ? (
-        <Link href={`/admin/bills?search=${encodeURIComponent(bill.number)}`} className="underline">
+        <Link href={`/admin/bills/${bill.id}`} className="underline">
           {bill.number} · {BILL_STATUS_LABELS[bill.status]}
         </Link>
       ) : (
@@ -181,6 +183,7 @@ async function OrderDetailBody({ params }: { params: Promise<{ id: string }> }) 
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={statusLabel(view.status)} />
+          {maySettle ? <OrderSettleButton orderId={view.id} /> : null}
           {withMoney ? (
             <Link href={`/track/${withMoney.trackToken}`} className="btn btn-ghost btn-sm">
               Guest&apos;s own status page
@@ -241,11 +244,20 @@ async function OrderDetailBody({ params }: { params: Promise<{ id: string }> }) 
             ))}
           </dl>
           <p className="hint mt-3">
-            Take and settle the money on{" "}
-            <Link href="/admin/bills" className="underline">
-              bills and payments
-            </Link>
-            .
+            {maySettle ? (
+              <>
+                &ldquo;Bill &amp; take payment&rdquo; at the top raises this order&rsquo;s bill and opens the till screen:
+                one place to fix the amount, take the money and hand over the receipt.
+              </>
+            ) : (
+              <>
+                Take and settle the money on{" "}
+                <Link href="/admin/bills" className="underline">
+                  bills and payments
+                </Link>
+                .
+              </>
+            )}
           </p>
         </Panel>
       ) : null}
